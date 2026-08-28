@@ -1,0 +1,5 @@
+STATUS: 🔥  BACKUP error 
+ENVIRONMENT: ❗️❗️KT❗️❗️
+ALERT: VK CLOUD BACKUP command was not executed
+LABELS: PGBACKREST_CLOUD_BACKUP
+NODE: kt-backup01
