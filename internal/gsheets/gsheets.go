@@ -93,7 +93,8 @@ func (c *Client) Publish(ctx context.Context, name string, rows [][]any) (string
 }
 
 // format делает заголовок жирным, закрепляет первую строку, вешает на неё
-// автофильтр и подсвечивает красным всё, что не SUCCESS.
+// автофильтр и красит строки: красным — всё, что не SUCCESS, жёлтым —
+// пустые ячейки у тех, кто отчитался об успехе.
 func (c *Client) format(ctx context.Context, fileID string, rowCount int) error {
 	ss, err := c.sheets.Spreadsheets.Get(fileID).Context(ctx).Do()
 	if err != nil {
@@ -149,6 +150,27 @@ func (c *Client) format(ctx context.Context, fileID string, rowCount int) error 
 						},
 						Format: &sheets.CellFormat{
 							BackgroundColor: &sheets.Color{Red: 1, Green: 0.85, Blue: 0.85},
+						},
+					},
+				},
+			}},
+			// SUCCESS с пустой ячейкой — источник отчитался об успехе, не сказав,
+			// когда. В отчёт такая строка попадает, но доверять ей нельзя,
+			// поэтому пустое место видно глазом, а не только в логе.
+			//
+			// Умножение вместо AND намеренно: в формулу без функций не может
+			// вмешаться локаль листа, разделяющая аргументы точкой с запятой.
+			// A2 без $ — правило считается поячеечно, красится сама пустая клетка.
+			{AddConditionalFormatRule: &sheets.AddConditionalFormatRuleRequest{
+				Rule: &sheets.ConditionalFormatRule{
+					Ranges: []*sheets.GridRange{dataRange},
+					BooleanRule: &sheets.BooleanRule{
+						Condition: &sheets.BooleanCondition{
+							Type:   "CUSTOM_FORMULA",
+							Values: []*sheets.ConditionValue{{UserEnteredValue: `=($D2="SUCCESS")*(A2="")`}},
+						},
+						Format: &sheets.CellFormat{
+							BackgroundColor: &sheets.Color{Red: 1, Green: 0.93, Blue: 0.66},
 						},
 					},
 				},
