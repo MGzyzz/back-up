@@ -1,0 +1,15 @@
+# секреты и данные — в репозиторий не попадают
+config.yaml
+*.json
+data/
+*.db
+*.db-wal
+*.db-shm
+
+
+# скомпилированный бинарник
+/backup-report
+data/
+*.session
+env.sh
+secrets/

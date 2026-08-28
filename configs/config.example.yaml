@@ -1,0 +1,31 @@
+telegram:
+  # ID канала с уведомлениями. Принимается и короткий вид (1234567890),
+  # и привычный по Bot API (-1001234567890).
+  channel_id: -1001234567890
+  # Файл сессии MTProto. Создаётся запуском с -login.
+  session_path: ./data/session.json
+
+schedule:
+  # Используется только в режиме -daemon; при запуске из cron не нужен.
+  report_at: "11:00"
+  timezone: Asia/Almaty
+
+google:
+  # Хвост URL папки Drive после /folders/
+  folder_id: "СЮДА_ID_ПАПКИ"
+  # OAuth-токен пользователя. Создаётся при первом входе через браузер.
+  token_path: ./data/google_token.json
+  retention_days: 30
+
+# LABELS из сообщения -> тип бэкапа в отчёте.
+# Неизвестная метка не ломает разбор: тип станет UNKNOWN, в лог уйдёт WARN.
+labels:
+  PGBACKREST: PostgreSQL
+  PGBACKREST_BACKUP: PostgreSQL
+  PGBACKREST_CLOUD_BACKUP: PostgreSQL
+  POSTGRES-LASTBACKUP: PostgreSQL
+  MONGODB_BACKUP: MongoDB
+  MONGODB_BACKUP_REMOTE_REPO: MongoDB
+  MINIO_BACKUPS: MinIO
+  MINIO_BACKUPS_AI_BUCKET: MinIO
+  MINIO_VK_CLOUD_BACKUP: MinIO
