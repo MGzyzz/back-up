@@ -43,6 +43,11 @@ type Sheet struct {
 	// Если Colors пуст, лист не красится и StatusCol не используется.
 	StatusCol int
 	Colors    []ColorRule
+	// Widths — ширина колонок в пикселях. Ноль или отсутствие значения
+	// означает «подогнать по содержимому». Автоподгонка ужимает колонку
+	// впритык, без запаса, а в заголовке ещё стоит кнопка автофильтра —
+	// поэтому колонкам с длинными значениями ширину задают явно.
+	Widths []int
 }
 
 // File — то немногое, что нужно знать о файле в папке отчётов.
@@ -300,13 +305,8 @@ func sheetFormat(sheetID int64, t Sheet) []*sheets.Request {
 		{SetBasicFilter: &sheets.SetBasicFilterRequest{
 			Filter: &sheets.BasicFilter{Range: tableRange},
 		}},
-		{AutoResizeDimensions: &sheets.AutoResizeDimensionsRequest{
-			Dimensions: &sheets.DimensionRange{
-				SheetId: sheetID, Dimension: "COLUMNS",
-				StartIndex: 0, EndIndex: colCount,
-			},
-		}},
 	}
+	reqs = append(reqs, columnWidths(sheetID, colCount, t.Widths)...)
 
 	// Правила заливки перечислены явно, а не выведены из «не успех»:
 	// в кластере ERROR означает «команда не выполнялась на этой ноде»
@@ -336,6 +336,52 @@ func sheetFormat(sheetID int64, t Sheet) []*sheets.Request {
 			},
 		})
 	}
+	return reqs
+}
+
+// columnWidths расставляет ширины: заданные — явно, остальные — автоподгонкой.
+//
+// Автоподгонка идёт одним запросом на непрерывный диапазон, чтобы не плодить
+// по запросу на колонку.
+func columnWidths(sheetID int64, colCount int64, widths []int) []*sheets.Request {
+	var reqs []*sheets.Request
+	autoFrom := int64(-1)
+
+	flushAuto := func(to int64) {
+		if autoFrom < 0 {
+			return
+		}
+		reqs = append(reqs, &sheets.Request{AutoResizeDimensions: &sheets.AutoResizeDimensionsRequest{
+			Dimensions: &sheets.DimensionRange{
+				SheetId: sheetID, Dimension: "COLUMNS",
+				StartIndex: autoFrom, EndIndex: to,
+			},
+		}})
+		autoFrom = -1
+	}
+
+	for i := int64(0); i < colCount; i++ {
+		px := 0
+		if int(i) < len(widths) {
+			px = widths[i]
+		}
+		if px <= 0 {
+			if autoFrom < 0 {
+				autoFrom = i
+			}
+			continue
+		}
+		flushAuto(i)
+		reqs = append(reqs, &sheets.Request{UpdateDimensionProperties: &sheets.UpdateDimensionPropertiesRequest{
+			Range: &sheets.DimensionRange{
+				SheetId: sheetID, Dimension: "COLUMNS",
+				StartIndex: i, EndIndex: i + 1,
+			},
+			Properties: &sheets.DimensionProperties{PixelSize: int64(px)},
+			Fields:     "pixelSize",
+		}})
+	}
+	flushAuto(colCount)
 	return reqs
 }
 

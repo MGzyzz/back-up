@@ -190,6 +190,12 @@ func sheetsOf(jobs []report.Job, backups []parser.Backup) []gsheets.Sheet {
 			Title:     "Сводка",
 			Rows:      report.SummaryRows(jobs),
 			StatusCol: report.SummaryStatusCol,
+			// Явная ширина только у двух левых колонок: их значения длиннее
+			// заголовка ("PostgreSQL Cloud", "AMANAT PROD"), и автоподгонка
+			// ужимала бы их впритык. Остальные колонки короткие и ровные —
+			// им хватает подгонки по содержимому, поэтому ширины не заданы.
+			// Порядок: Environment, Backup, дальше автоматически.
+			Widths: []int{130, 120},
 			Colors: []gsheets.ColorRule{
 				{Value: report.MarkOK, Color: green},
 				{Value: report.MarkFail, Color: red},

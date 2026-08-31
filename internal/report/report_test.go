@@ -278,7 +278,8 @@ func TestSummaryRows(t *testing.T) {
 
 	want := [][]any{
 		{"Environment", "Backup", "Status", "Start", "End", "Duration", "Node"},
-		{"KT", "MinIO", MarkOK, "2025-12-15 01:00:00", "2025-12-15 02:23:00", "1h 23m", "kt-minio03"},
+		// Порядок как на входе: сортировка — забота Aggregate, не SummaryRows.
+		{"KT", "MinIO", MarkOK, "01:00:00", "02:23:00", "1h 23m", "kt-minio03"},
 		{"KT", "PostgreSQL Cloud", MarkFail, "", "", "", "—"},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -347,5 +348,48 @@ func TestSummaryNoNodeAtAll(t *testing.T) {
 	}
 	if got := SummaryRows(Aggregate(in))[1][6]; got != "—" {
 		t.Errorf("Node = %q, ожидал «—»", got)
+	}
+}
+
+// Провалы идут первыми: первая строка отчёта сама отвечает на вопрос
+// «всё ли прошло», читать остальное не требуется.
+func TestAggregatePutsFailuresFirst(t *testing.T) {
+	d := func(h int) time.Time { return time.Date(2025, 12, 15, h, 0, 0, 0, testLoc) }
+	in := []parser.Backup{
+		{Environment: "AMANAT PROD", Label: "MINIO_BACKUPS", Type: "MinIO",
+			Status: parser.StatusSuccess, Start: d(1), End: d(2)},
+		{Environment: "KT", Label: "PGBACKREST_BACKUP", Type: "PostgreSQL", Status: parser.StatusError},
+		{Environment: "KT", Label: "MINIO_BACKUPS", Type: "MinIO",
+			Status: parser.StatusSuccess, Start: d(1), End: d(2)},
+		{Environment: "AMANAT PROD", Label: "MONGODB_BACKUP", Type: "MongoDB", Status: parser.StatusFailed},
+	}
+
+	var got []string
+	for _, j := range Aggregate(in) {
+		got = append(got, j.Environment+"/"+j.Name)
+	}
+
+	// Сначала оба провала по алфавиту, потом оба успеха по алфавиту.
+	want := []string{
+		"AMANAT PROD/MongoDB", "KT/PostgreSQL",
+		"AMANAT PROD/MinIO", "KT/MinIO",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("порядок %v, ожидал %v", got, want)
+	}
+}
+
+// В сводке дата не пишется — она одна на файл и стоит в его имени.
+// На деталях, наоборот, остаётся: так требует ТЗ.
+func TestTimeLayoutDiffersBetweenSheets(t *testing.T) {
+	d := func(h int) time.Time { return time.Date(2025, 12, 15, h, 0, 0, 0, testLoc) }
+	in := []parser.Backup{{Environment: "KT", Node: "n", Label: "MINIO_BACKUPS", Type: "MinIO",
+		Status: parser.StatusSuccess, Start: d(1), End: d(2)}}
+
+	if got := SummaryRows(Aggregate(in))[1][3]; got != "01:00:00" {
+		t.Errorf("сводка: Start = %v, ожидал 01:00:00 без даты", got)
+	}
+	if got := DetailRows(in)[1][4]; got != "2025-12-15 01:00:00" {
+		t.Errorf("детали: Start = %v, ожидал полную дату", got)
 	}
 }

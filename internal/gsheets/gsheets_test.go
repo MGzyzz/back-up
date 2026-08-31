@@ -1,6 +1,7 @@
 package gsheets
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -88,5 +89,40 @@ func TestSheetFormatBuildsStatusFormula(t *testing.T) {
 
 	if len(formulas) != 1 || formulas[0] != `=$C2="OK"` {
 		t.Errorf("формулы %q, ожидал одну =$C2=\"OK\"", formulas)
+	}
+}
+
+func TestColumnWidths(t *testing.T) {
+	// Заданные ширины — явными запросами, незаданные — одной автоподгонкой
+	// на непрерывный диапазон.
+	reqs := columnWidths(7, 5, []int{130, 0, 0, 90})
+
+	var got []string
+	for _, r := range reqs {
+		switch {
+		case r.UpdateDimensionProperties != nil:
+			d := r.UpdateDimensionProperties
+			got = append(got, fmt.Sprintf("fixed[%d:%d]=%d",
+				d.Range.StartIndex, d.Range.EndIndex, d.Properties.PixelSize))
+		case r.AutoResizeDimensions != nil:
+			d := r.AutoResizeDimensions.Dimensions
+			got = append(got, fmt.Sprintf("auto[%d:%d]", d.StartIndex, d.EndIndex))
+		}
+	}
+
+	want := []string{"fixed[0:1]=130", "auto[1:3]", "fixed[3:4]=90", "auto[4:5]"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("запросы %v, ожидал %v", got, want)
+	}
+}
+
+// Ширины не заданы вовсе — весь лист уходит в одну автоподгонку.
+func TestColumnWidthsAllAuto(t *testing.T) {
+	reqs := columnWidths(7, 7, nil)
+	if len(reqs) != 1 || reqs[0].AutoResizeDimensions == nil {
+		t.Fatalf("ожидал один запрос автоподгонки, получил %d", len(reqs))
+	}
+	if d := reqs[0].AutoResizeDimensions.Dimensions; d.StartIndex != 0 || d.EndIndex != 7 {
+		t.Errorf("диапазон [%d:%d], ожидал [0:7]", d.StartIndex, d.EndIndex)
 	}
 }

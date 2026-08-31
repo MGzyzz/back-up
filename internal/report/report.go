@@ -33,8 +33,14 @@ const (
 
 const (
 	namePrefix = "backup-report-"
-	cellLayout = "2006-01-02 15:04:05"
-	noValue    = "—"
+	// Детали держат полную дату: так её называет ТЗ («Start date & time»),
+	// и там же с ней разбираются построчно.
+	detailTimeLayout = "2006-01-02 15:04:05"
+	// В сводке дата не нужна: она одна на весь файл и уже стоит в его имени.
+	// Продублированная в каждой строке дважды, она добавляет 22 символа
+	// и ноль информации — ровно то, против чего «минимум букв».
+	summaryTimeLayout = "15:04:05"
+	noValue           = "—"
 )
 
 // Схемы таблиц. Ширину отчёта берут отсюда, а не считают руками.
@@ -125,12 +131,24 @@ func Aggregate(bs []parser.Backup) []Job {
 	// ищет строку глазами на том же месте, что и вчера.
 	slices.SortFunc(jobs, func(a, b Job) int {
 		return cmp.Or(
+			// Провалы наверх: тогда первая строка отчёта сама отвечает
+			// на главный вопрос. Зелёная сверху — прошло всё, читать
+			// остальное незачем.
+			cmp.Compare(sortRank(a.OK), sortRank(b.OK)),
 			cmp.Compare(a.Environment, b.Environment),
 			cmp.Compare(a.Name, b.Name),
 			cmp.Compare(a.Label, b.Label),
 		)
 	})
 	return jobs
+}
+
+// sortRank ставит провал (false) перед успехом (true).
+func sortRank(ok bool) int {
+	if ok {
+		return 1
+	}
+	return 0
 }
 
 // SummaryRows — таблица «всё ли прошло»: одна строка на задачу.
@@ -147,7 +165,7 @@ func SummaryRows(jobs []Job) [][]any {
 		if !j.OK {
 			node = strings.Join(j.Nodes, ", ")
 		}
-		start, end, dur := timeCells(j.Start, j.End, j.HasTimes())
+		start, end, dur := timeCells(j.Start, j.End, j.HasTimes(), summaryTimeLayout)
 		rows = append(rows, []any{
 			j.Environment, j.Name, mark, start, end, dur, cmp.Or(node, noValue),
 		})
@@ -179,7 +197,7 @@ func DetailRows(bs []parser.Backup) [][]any {
 
 	rows := newTable(detailHeader, len(sorted))
 	for _, b := range sorted {
-		start, end, dur := timeCells(b.Start, b.End, b.HasTimes())
+		start, end, dur := timeCells(b.Start, b.End, b.HasTimes(), detailTimeLayout)
 		rows = append(rows, []any{
 			b.Environment, cmp.Or(b.Node, noValue), b.Type, b.Status, start, end, dur,
 		})
@@ -199,11 +217,11 @@ func newTable(header []string, rowCount int) [][]any {
 
 // timeCells форматирует тройку Start/End/Duration. Без времён все три пустые:
 // у задачи, которую никто не выполнил, длительности не существует.
-func timeCells(start, end time.Time, has bool) (string, string, string) {
+func timeCells(start, end time.Time, has bool, layout string) (string, string, string) {
 	if !has {
 		return "", "", ""
 	}
-	return start.Format(cellLayout), end.Format(cellLayout), humanDuration(end.Sub(start))
+	return start.Format(layout), end.Format(layout), humanDuration(end.Sub(start))
 }
 
 func ReportName(day time.Time) string {
