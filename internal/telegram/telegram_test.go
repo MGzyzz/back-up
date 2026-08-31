@@ -1,8 +1,11 @@
 package telegram
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/gotd/td/tg"
 )
 
 func TestNormalizeChannelID(t *testing.T) {
@@ -56,5 +59,60 @@ func TestDayBoundsUsesConfiguredZone(t *testing.T) {
 	}
 	if !night.After(from) || !night.Before(to) {
 		t.Errorf("ночное сообщение %v не попало в интервал [%v, %v)", night, from, to)
+	}
+}
+
+// Способ доставки кода надо назвать словами: чаще всего он «в приложение»,
+// а человек ждёт SMS и решает, что код не пришёл.
+func TestDescribeCodeType(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  tg.AuthSentCodeTypeClass
+		want string // подстрока, которая обязана быть в ответе
+	}{
+		{"в приложение", &tg.AuthSentCodeTypeApp{}, "В САМ TELEGRAM"},
+		{"по SMS", &tg.AuthSentCodeTypeSMS{}, "SMS"},
+		{"звонком", &tg.AuthSentCodeTypeCall{}, "звонком"},
+		{"сброшенный звонок", &tg.AuthSentCodeTypeMissedCall{}, "последние цифры"},
+		{"на почту", &tg.AuthSentCodeTypeEmailCode{}, "почту"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := describeCodeType(&tg.AuthSentCode{Type: tt.typ})
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("описание %q не содержит %q", got, tt.want)
+			}
+		})
+	}
+
+	// Незнакомый способ не должен ронять вход — пусть скажет хоть что-то.
+	if got := describeCodeType(&tg.AuthSentCode{Type: &tg.AuthSentCodeTypeSetUpEmailRequired{}}); got == "" {
+		t.Error("незнакомый способ описан пустой строкой")
+	}
+	if got := describeCodeType(nil); got == "" {
+		t.Error("nil описан пустой строкой")
+	}
+}
+
+// Telegram сообщает, через сколько можно повторить и чем придёт следующий код.
+// Это единственное, на что можно опереться, когда код не дошёл.
+func TestResendHint(t *testing.T) {
+	sent := &tg.AuthSentCode{Type: &tg.AuthSentCodeTypeApp{}}
+	sent.SetTimeout(120)
+	sent.SetNextType(&tg.AuthCodeTypeSMS{})
+
+	got := resendHint(sent)
+	for _, want := range []string{"2m0s", "по SMS"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("подсказка %q не содержит %q", got, want)
+		}
+	}
+
+	// Telegram ничего не обещал — подсказки быть не должно.
+	if got := resendHint(&tg.AuthSentCode{Type: &tg.AuthSentCodeTypeSMS{}}); got != "" {
+		t.Errorf("без Timeout и NextType ожидал пустую подсказку, получил %q", got)
+	}
+	if got := resendHint(nil); got != "" {
+		t.Errorf("nil ожидал пустую подсказку, получил %q", got)
 	}
 }

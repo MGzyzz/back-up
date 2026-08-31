@@ -19,6 +19,7 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 
 	"backup-report/internal/parser"
 )
@@ -113,8 +114,15 @@ func (c *Client) Login(ctx context.Context) error {
 			return err // сеть или протокол — входить бессмысленно
 		}
 
-		code := auth.CodeAuthenticatorFunc(func(context.Context, *tg.AuthSentCode) (string, error) {
-			fmt.Print("код из Telegram: ")
+		code := auth.CodeAuthenticatorFunc(func(_ context.Context, sent *tg.AuthSentCode) (string, error) {
+			// Способ доставки выбирает Telegram, а не мы: если на номере уже
+			// есть активная сессия, код уходит в само приложение, и человек
+			// напрасно ждёт SMS. Поэтому говорим, куда именно смотреть.
+			fmt.Printf("код отправлен: %s\n", describeCodeType(sent))
+			if hint := resendHint(sent); hint != "" {
+				fmt.Println(hint)
+			}
+			fmt.Print("код: ")
 			line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 			return strings.TrimSpace(line), err
 		})
@@ -123,11 +131,82 @@ func (c *Client) Login(ctx context.Context) error {
 			auth.SendCodeOptions{},
 		)
 		if err := tgc.Auth().IfNecessary(ctx, flow); err != nil {
+			// Антифлуд Telegram выглядит как обычная ошибка протокола, хотя
+			// чинится только ожиданием. Говорим об этом прямо, иначе человек
+			// будет дёргать -login по кругу и продлевать себе запрет.
+			if d, ok := tgerr.AsFloodWait(err); ok {
+				return fmt.Errorf("Telegram временно отказывает в коде (антифлуд): повтори через %s. "+
+					"Так бывает, когда код запрашивали много раз подряд", d.Round(time.Second))
+			}
 			return fmt.Errorf("вход: %w", err)
 		}
 		fmt.Println("вход выполнен, сессия сохранена в", c.cfg.SessionPath)
 		return nil
 	})
+}
+
+// describeCodeType переводит способ доставки кода в человеческую фразу.
+func describeCodeType(sent *tg.AuthSentCode) string {
+	if sent == nil {
+		return "способ доставки неизвестен"
+	}
+	switch sent.Type.(type) {
+	case *tg.AuthSentCodeTypeApp:
+		return "СООБЩЕНИЕМ В САМ TELEGRAM (служебный чат «Telegram»), не по SMS —\n" +
+			"  так бывает, когда на номере уже есть активная сессия"
+	case *tg.AuthSentCodeTypeSMS, *tg.AuthSentCodeTypeFirebaseSMS:
+		return "по SMS"
+	case *tg.AuthSentCodeTypeFragmentSMS:
+		return "по SMS через Fragment"
+	case *tg.AuthSentCodeTypeSMSWord, *tg.AuthSentCodeTypeSMSPhrase:
+		return "по SMS (слово или фраза, а не цифры)"
+	case *tg.AuthSentCodeTypeCall:
+		return "звонком — код продиктуют голосом"
+	case *tg.AuthSentCodeTypeMissedCall, *tg.AuthSentCodeTypeFlashCall:
+		return "сброшенным звонком — код это последние цифры номера, с которого звонят"
+	case *tg.AuthSentCodeTypeEmailCode:
+		return "на почту, привязанную к аккаунту"
+	default:
+		return fmt.Sprintf("способ %T — см. приложение Telegram", sent.Type)
+	}
+}
+
+// resendHint пересказывает, что Telegram обещает сделать, если код не дошёл:
+// через сколько можно повторить запрос и каким способом придёт следующий.
+// Без этого человек сидит перед немым приглашением и не знает, ждать ему
+// или уже бесполезно.
+func resendHint(sent *tg.AuthSentCode) string {
+	if sent == nil {
+		return ""
+	}
+	var parts []string
+	if t, ok := sent.GetTimeout(); ok && t > 0 {
+		parts = append(parts, fmt.Sprintf("повторный запрос возможен через %s",
+			(time.Duration(t)*time.Second).String()))
+	}
+	if next, ok := sent.GetNextType(); ok {
+		parts = append(parts, "следующий код придёт "+describeNextType(next))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "  (" + strings.Join(parts, "; ") + ")"
+}
+
+// describeNextType — способ доставки следующей попытки.
+func describeNextType(t tg.AuthCodeTypeClass) string {
+	switch t.(type) {
+	case *tg.AuthCodeTypeSMS:
+		return "по SMS"
+	case *tg.AuthCodeTypeFragmentSMS:
+		return "по SMS через Fragment"
+	case *tg.AuthCodeTypeCall:
+		return "звонком"
+	case *tg.AuthCodeTypeFlashCall, *tg.AuthCodeTypeMissedCall:
+		return "сброшенным звонком"
+	default:
+		return fmt.Sprintf("способом %T", t)
+	}
 }
 
 // FetchDay выгружает сообщения канала за указанные сутки.

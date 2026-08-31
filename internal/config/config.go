@@ -50,6 +50,7 @@ func (c *Config) Location() *time.Location { return c.loc }
 // ReportTime — schedule.report_at, разобранное на часы и минуты.
 func (c *Config) ReportTime() (hh, mm int) { return c.reportHH, c.reportMM }
 
+// Загрузка конфига
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
