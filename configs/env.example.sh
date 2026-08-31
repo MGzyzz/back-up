@@ -17,4 +17,4 @@ export TELEGRAM_PHONE=+70000000000
 # export TELEGRAM_2FA_PASSWORD=
 
 # Клиентский файл OAuth типа Desktop app, скачанный из Google Cloud Console.
-export GOOGLE_OAUTH_CLIENT=./secrets/client_secret.json
+export GOOGLE_OAUTH_CLIENT="$PWD/secrets/client_secret.json"
