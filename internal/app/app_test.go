@@ -16,9 +16,7 @@ import (
 
 var testLoc = time.FixedZone("+05", 5*60*60)
 
-// fakeSource и fakeSink подменяют Telegram и Google Drive. Ровно ради них
-// в пакете объявлены интерфейсы Source и Sink: без них порядок шагов
-// пришлось бы проверять руками на живых учётных данных.
+// fakeSource и fakeSink подменяют Telegram и Google Drive
 type fakeSource struct {
 	msgs []parser.RawMessage
 	err  error
