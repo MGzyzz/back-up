@@ -34,13 +34,21 @@ type Config struct {
 	} `yaml:"google"`
 	Labels map[string]string `yaml:"labels"`
 
-	loc *time.Location
+	rawAPIID string // TELEGRAM_API_ID как пришёл из окружения, до разбора
+
+	// Производные значения. Их заполняет prepare, а его зовёт только
+	// LoadConfig — поэтому у любого собранного конфига они корректны,
+	// и Location() никогда не вернёт nil.
+	loc      *time.Location
+	reportHH int
+	reportMM int
 }
 
-// Location — часовой пояс из schedule.timezone. Заполняется в Validate.
-func (c *Config) Location() *time.Location {
-	return c.loc
-}
+// Location — часовой пояс из schedule.timezone.
+func (c *Config) Location() *time.Location { return c.loc }
+
+// ReportTime — schedule.report_at, разобранное на часы и минуты.
+func (c *Config) ReportTime() (hh, mm int) { return c.reportHH, c.reportMM }
 
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -53,32 +61,37 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("разобрать конфиг: %w", err)
 	}
 
-	// Ошибку разбора не теряем: нулевой APIID поймает Validate,
-	var apiIDErr error
-	if raw := os.Getenv("TELEGRAM_API_ID"); raw != "" {
-		id, err := strconv.Atoi(raw)
-		if err != nil {
-			apiIDErr = fmt.Errorf("TELEGRAM_API_ID %q не число", raw)
-		}
-		cfg.Telegram.APIID = id
-	}
-	cfg.Telegram.APIHash = os.Getenv("TELEGRAM_API_HASH")
-	cfg.Telegram.Phone = os.Getenv("TELEGRAM_PHONE")
-	cfg.Google.OAuthClientPath = os.Getenv("GOOGLE_OAUTH_CLIENT")
-
-	if err := errors.Join(apiIDErr, cfg.Validate()); err != nil {
+	cfg.readSecrets()
+	if err := cfg.prepare(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
 }
 
-// Validate собирает ВСЕ проблемы разом
-func (c *Config) Validate() error {
+// readSecrets забирает секреты из окружения. Разбор TELEGRAM_API_ID отложен
+// до prepare: там про него ровно одна жалоба вместо двух противоречивых.
+func (c *Config) readSecrets() {
+	c.rawAPIID = os.Getenv("TELEGRAM_API_ID")
+	c.Telegram.APIHash = os.Getenv("TELEGRAM_API_HASH")
+	c.Telegram.Phone = os.Getenv("TELEGRAM_PHONE")
+	c.Google.OAuthClientPath = os.Getenv("GOOGLE_OAUTH_CLIENT")
+}
+
+// prepare собирает ВСЕ проблемы разом и заполняет производные поля.
+func (c *Config) prepare() error {
 	var errs []error
 
-	if c.Telegram.APIID == 0 {
+	switch id, err := strconv.Atoi(c.rawAPIID); {
+	case c.rawAPIID == "":
 		errs = append(errs, errors.New("переменная окружения TELEGRAM_API_ID не задана"))
+	case err != nil:
+		errs = append(errs, fmt.Errorf("TELEGRAM_API_ID %q не число", c.rawAPIID))
+	case id <= 0:
+		errs = append(errs, fmt.Errorf("TELEGRAM_API_ID %d: ожидается положительное число", id))
+	default:
+		c.Telegram.APIID = id
 	}
+
 	if c.Telegram.APIHash == "" {
 		errs = append(errs, errors.New("переменная окружения TELEGRAM_API_HASH не задана"))
 	}
@@ -109,20 +122,20 @@ func (c *Config) Validate() error {
 		errs = append(errs, errors.New("labels не может быть пустым"))
 	}
 
-	// Разбор в часы/минуты живёт в пакете report; здесь достаточно проверить формат.
-	if _, err := time.Parse("15:04", c.Schedule.ReportAt); err != nil {
+	// Время разбирается здесь один раз: дальше по коду его берут
+	// готовым через ReportTime, а не парсят строку заново.
+	if t, err := time.Parse("15:04", c.Schedule.ReportAt); err != nil {
 		errs = append(errs, fmt.Errorf("schedule.report_at %q: %w", c.Schedule.ReportAt, err))
+	} else {
+		c.reportHH, c.reportMM = t.Hour(), t.Minute()
 	}
 
 	if c.Schedule.Timezone == "" {
 		errs = append(errs, errors.New("schedule.timezone обязателен"))
+	} else if loc, err := time.LoadLocation(c.Schedule.Timezone); err != nil {
+		errs = append(errs, fmt.Errorf("schedule.timezone: %w", err))
 	} else {
-		loc, err := time.LoadLocation(c.Schedule.Timezone)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("schedule.timezone: %w", err))
-		} else {
-			c.loc = loc
-		}
+		c.loc = loc
 	}
 
 	return errors.Join(errs...)

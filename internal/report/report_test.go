@@ -31,7 +31,7 @@ func TestHumanDuration(t *testing.T) {
 	}
 }
 
-func TestBuildRows(t *testing.T) {
+func TestDetailRows(t *testing.T) {
 	d := func(hh, mm, ss int) time.Time {
 		return time.Date(2025, 12, 15, hh, mm, ss, 0, testLoc)
 	}
@@ -52,9 +52,9 @@ func TestBuildRows(t *testing.T) {
 		{"PROD KPO", "—", "PostgreSQL", "SUCCESS", "2025-12-15 03:30:19", "2025-12-15 03:34:57", "0h 04m"},
 	}
 
-	got := BuildRows(in)
+	got := DetailRows(in)
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("BuildRows():\nполучил %v\nожидал  %v", got, want)
+		t.Errorf("DetailRows():\nполучил %v\nожидал  %v", got, want)
 	}
 }
 
@@ -82,8 +82,8 @@ func TestReportDateFromName(t *testing.T) {
 			if !ok {
 				t.Fatal("ожидал ok == true, получил false")
 			}
-			if got.Format(dateLayout) != tt.want {
-				t.Errorf("дата = %q, ожидал %q", got.Format(dateLayout), tt.want)
+			if got.Format(DateLayout) != tt.want {
+				t.Errorf("дата = %q, ожидал %q", got.Format(DateLayout), tt.want)
 			}
 		})
 	}
@@ -112,59 +112,9 @@ func TestShouldDelete(t *testing.T) {
 	}
 }
 
-func TestParseReportAt(t *testing.T) {
-	hh, mm, err := ParseReportAt("11:00")
-	if err != nil || hh != 11 || mm != 0 {
-		t.Errorf(`ParseReportAt("11:00") = %d, %d, %v; ожидал 11, 0, nil`, hh, mm, err)
-	}
-	if _, _, err := ParseReportAt("25:99"); err == nil {
-		t.Error(`ParseReportAt("25:99") = nil error; ожидал ошибку`)
-	}
-	if _, _, err := ParseReportAt(""); err == nil {
-		t.Error(`ParseReportAt("") = nil error; ожидал ошибку`)
-	}
-}
-
-func TestNextRun(t *testing.T) {
-	loc := testLoc
-	tests := []struct {
-		name string
-		now  time.Time
-		want time.Time
-	}{
-		{
-			name: "до 11:00 — сегодня",
-			now:  time.Date(2025, 12, 15, 9, 30, 0, 0, loc),
-			want: time.Date(2025, 12, 15, 11, 0, 0, 0, loc),
-		},
-		{
-			name: "после 11:00 — завтра",
-			now:  time.Date(2025, 12, 15, 15, 40, 0, 0, loc),
-			want: time.Date(2025, 12, 16, 11, 0, 0, 0, loc),
-		},
-		{
-			name: "ровно 11:00 — завтра, чтобы не сработать дважды",
-			now:  time.Date(2025, 12, 15, 11, 0, 0, 0, loc),
-			want: time.Date(2025, 12, 16, 11, 0, 0, 0, loc),
-		},
-		{
-			name: "переход через конец месяца",
-			now:  time.Date(2025, 12, 31, 23, 59, 0, 0, loc),
-			want: time.Date(2026, 1, 1, 11, 0, 0, 0, loc),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := NextRun(tt.now, 11, 0, loc); !got.Equal(tt.want) {
-				t.Errorf("NextRun(%v) = %v, ожидал %v", tt.now, got, tt.want)
-			}
-		})
-	}
-}
-
 // Строка со статусом ERROR: времён нет, три последние колонки пустые,
 // и в сортировке она уходит в конец.
-func TestBuildRowsErrorWithoutTimes(t *testing.T) {
+func TestDetailRowsErrorWithoutTimes(t *testing.T) {
 	d := func(hh, mm, ss int) time.Time {
 		return time.Date(2025, 12, 15, hh, mm, ss, 0, testLoc)
 	}
@@ -174,7 +124,7 @@ func TestBuildRowsErrorWithoutTimes(t *testing.T) {
 			Start: d(1, 0, 1), End: d(2, 23, 20)},
 	}
 
-	got := BuildRows(in)
+	got := DetailRows(in)
 	if len(got) != 3 {
 		t.Fatalf("строк %d, ожидал 3 (заголовок + две)", len(got))
 	}
@@ -189,5 +139,213 @@ func TestBuildRowsErrorWithoutTimes(t *testing.T) {
 		if last[i] != "" {
 			t.Errorf("%s = %q, ожидал пустую строку", name, last[i])
 		}
+	}
+}
+
+func TestCutoff(t *testing.T) {
+	now := time.Date(2025, 12, 15, 11, 30, 0, 0, testLoc)
+	got := Cutoff(now, 30, testLoc)
+	want := time.Date(2025, 11, 15, 0, 0, 0, 0, testLoc)
+	if !got.Equal(want) {
+		t.Errorf("Cutoff = %v, ожидал %v", got, want)
+	}
+	// Момент внутри суток не должен влиять на границу: она всегда полночь.
+	late := time.Date(2025, 12, 15, 23, 59, 59, 0, testLoc)
+	if !Cutoff(late, 30, testLoc).Equal(want) {
+		t.Errorf("граница уехала от времени суток: %v", Cutoff(late, 30, testLoc))
+	}
+}
+
+// BuildRows не имеет права переупорядочивать срез вызывающей стороны.
+func TestDetailRowsDoesNotMutateInput(t *testing.T) {
+	d := func(hh int) time.Time { return time.Date(2025, 12, 15, hh, 0, 0, 0, testLoc) }
+	in := []parser.Backup{
+		{Node: "поздний", Status: parser.StatusSuccess, Start: d(5), End: d(6)},
+		{Node: "ранний", Status: parser.StatusSuccess, Start: d(1), End: d(2)},
+	}
+
+	DetailRows(in)
+
+	if in[0].Node != "поздний" || in[1].Node != "ранний" {
+		t.Errorf("DetailRows переставила элементы аргумента: %v", in)
+	}
+}
+
+// Правило кластера: бэкап сделан хотя бы одной нодой — задача успешна,
+// а остальные «команда не выполнялась» отказом не считаются.
+func TestAggregateClusterSuccess(t *testing.T) {
+	d := func(hh, mm int) time.Time { return time.Date(2025, 12, 15, hh, mm, 0, 0, testLoc) }
+	in := []parser.Backup{
+		{Environment: "KT", Node: "kt-minio01", Label: "MINIO_BACKUPS", Type: "MinIO", Status: parser.StatusError},
+		{Environment: "KT", Node: "kt-minio02", Label: "MINIO_BACKUPS", Type: "MinIO", Status: parser.StatusError},
+		{Environment: "KT", Node: "kt-minio03", Label: "MINIO_BACKUPS", Type: "MinIO",
+			Status: parser.StatusSuccess, Start: d(1, 0), End: d(2, 23)},
+	}
+
+	jobs := Aggregate(in)
+
+	if len(jobs) != 1 {
+		t.Fatalf("задач %d, ожидал 1: три ноды одного кластера — одна задача", len(jobs))
+	}
+	j := jobs[0]
+	if !j.OK {
+		t.Error("задача не успешна, хотя одна нода отчиталась SUCCESS")
+	}
+	if j.Node != "kt-minio03" {
+		t.Errorf("Node = %q, ожидал ноду, которая отработала", j.Node)
+	}
+	if !reflect.DeepEqual(j.Nodes, []string{"kt-minio01", "kt-minio02", "kt-minio03"}) {
+		t.Errorf("Nodes = %v, ожидал все три ноды по алфавиту", j.Nodes)
+	}
+	if !j.Start.Equal(d(1, 0)) || !j.End.Equal(d(2, 23)) {
+		t.Errorf("времена %v–%v, ожидал времена успешной ноды", j.Start, j.End)
+	}
+}
+
+// Ключ — LABELS, а не тип: иначе провал одного MinIO-бэкапа спрятался бы
+// за успехом другого.
+func TestAggregateKeepsLabelsApart(t *testing.T) {
+	d := func(hh int) time.Time { return time.Date(2025, 12, 15, hh, 0, 0, 0, testLoc) }
+	in := []parser.Backup{
+		{Environment: "KT", Node: "kt-minio01", Label: "MINIO_BACKUPS", Type: "MinIO",
+			Status: parser.StatusSuccess, Start: d(1), End: d(2)},
+		{Environment: "KT", Node: "kt-minio01", Label: "MINIO_BACKUPS_AI_BUCKET", Type: "MinIO AI",
+			Status: parser.StatusError},
+	}
+
+	jobs := Aggregate(in)
+
+	if len(jobs) != 2 {
+		t.Fatalf("задач %d, ожидал 2: разные LABELS — разные бэкапы", len(jobs))
+	}
+	byName := map[string]bool{}
+	for _, j := range jobs {
+		byName[j.Name] = j.OK
+	}
+	if !byName["MinIO"] {
+		t.Error("MinIO должен быть успешен")
+	}
+	if byName["MinIO AI"] {
+		t.Error("MinIO AI провалился, но помечен успешным — провал спрятался за соседом")
+	}
+}
+
+// Никто не отчитался успехом — задача провалена.
+func TestAggregateAllErrorsIsFailure(t *testing.T) {
+	in := []parser.Backup{
+		{Environment: "KT", Node: "kt-pg01", Label: "PGBACKREST_BACKUP", Type: "PostgreSQL", Status: parser.StatusError},
+		{Environment: "KT", Node: "kt-pg02", Label: "PGBACKREST_BACKUP", Type: "PostgreSQL", Status: parser.StatusFailed},
+	}
+
+	jobs := Aggregate(in)
+
+	if len(jobs) != 1 || jobs[0].OK {
+		t.Fatalf("ожидал одну проваленную задачу, получил %+v", jobs)
+	}
+	if jobs[0].HasTimes() {
+		t.Error("у задачи без успеха не должно быть времён")
+	}
+}
+
+// Порядок строк не должен зависеть от порядка сообщений в канале:
+// человек ищет строку глазами на том же месте, что и вчера.
+func TestAggregateOrderIsStable(t *testing.T) {
+	in := []parser.Backup{
+		{Environment: "PROD KEGOC", Label: "MONGODB_BACKUP", Type: "MongoDB", Status: parser.StatusSuccess},
+		{Environment: "KT", Label: "PGBACKREST_BACKUP", Type: "PostgreSQL", Status: parser.StatusSuccess},
+		{Environment: "KT", Label: "MINIO_BACKUPS", Type: "MinIO", Status: parser.StatusSuccess},
+	}
+
+	var got []string
+	for _, j := range Aggregate(in) {
+		got = append(got, j.Environment+"/"+j.Name)
+	}
+
+	want := []string{"KT/MinIO", "KT/PostgreSQL", "PROD KEGOC/MongoDB"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("порядок %v, ожидал %v", got, want)
+	}
+}
+
+func TestSummaryRows(t *testing.T) {
+	d := func(hh, mm int) time.Time { return time.Date(2025, 12, 15, hh, mm, 0, 0, testLoc) }
+	jobs := []Job{
+		{Environment: "KT", Name: "MinIO", OK: true, Start: d(1, 0), End: d(2, 23), Node: "kt-minio03"},
+		{Environment: "KT", Name: "PostgreSQL Cloud", OK: false},
+	}
+
+	got := SummaryRows(jobs)
+
+	want := [][]any{
+		{"Environment", "Backup", "Status", "Start", "End", "Duration", "Node"},
+		{"KT", "MinIO", MarkOK, "2025-12-15 01:00:00", "2025-12-15 02:23:00", "1h 23m", "kt-minio03"},
+		{"KT", "PostgreSQL Cloud", MarkFail, "", "", "", "—"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("SummaryRows():\nполучил %v\nожидал  %v", got, want)
+	}
+	// Колонка статуса должна стоять там, где её ищет покраска.
+	if got[0][SummaryStatusCol] != "Status" {
+		t.Errorf("SummaryStatusCol = %d указывает на %v, а не на Status", SummaryStatusCol, got[0][SummaryStatusCol])
+	}
+}
+
+func TestDetailStatusColMatchesHeader(t *testing.T) {
+	rows := DetailRows(nil)
+	if rows[0][DetailStatusCol] != "Status" {
+		t.Errorf("DetailStatusCol = %d указывает на %v, а не на Status", DetailStatusCol, rows[0][DetailStatusCol])
+	}
+}
+
+// У проваленной задачи в сводке обязаны стоять ноды, которые отчитались:
+// именно с них человек начинает разбираться. Пустая клетка бесполезна.
+func TestSummaryShowsNodesOnFailure(t *testing.T) {
+	in := []parser.Backup{
+		{Environment: "KPO PROD", Node: "kpo-postgres03", Label: "PGBACKREST_BACKUP",
+			Type: "PostgreSQL", Status: parser.StatusError},
+		{Environment: "KPO PROD", Node: "kpo-postgres01", Label: "PGBACKREST_BACKUP",
+			Type: "PostgreSQL", Status: parser.StatusError},
+		// Повтор с той же ноды не должен дублироваться в списке.
+		{Environment: "KPO PROD", Node: "kpo-postgres01", Label: "PGBACKREST_BACKUP",
+			Type: "PostgreSQL", Status: parser.StatusError},
+	}
+
+	rows := SummaryRows(Aggregate(in))
+
+	if len(rows) != 2 {
+		t.Fatalf("строк %d, ожидал 2", len(rows))
+	}
+	if got, want := rows[1][2], MarkFail; got != want {
+		t.Errorf("статус = %v, ожидал %v", got, want)
+	}
+	if got, want := rows[1][6], "kpo-postgres01, kpo-postgres03"; got != want {
+		t.Errorf("Node = %q, ожидал %q", got, want)
+	}
+}
+
+// У успеха колонка остаётся про ту ноду, что реально отработала,
+// а не про весь кластер.
+func TestSummaryShowsWinningNodeOnSuccess(t *testing.T) {
+	d := func(h int) time.Time { return time.Date(2025, 12, 15, h, 0, 0, 0, testLoc) }
+	in := []parser.Backup{
+		{Environment: "KT", Node: "kt-minio01", Label: "MINIO_BACKUPS", Type: "MinIO", Status: parser.StatusError},
+		{Environment: "KT", Node: "kt-minio03", Label: "MINIO_BACKUPS", Type: "MinIO",
+			Status: parser.StatusSuccess, Start: d(1), End: d(2)},
+	}
+
+	rows := SummaryRows(Aggregate(in))
+
+	if got, want := rows[1][6], "kt-minio03"; got != want {
+		t.Errorf("Node = %q, ожидал %q — только отработавшую ноду", got, want)
+	}
+}
+
+// Ноды нет ни в одном сообщении — честное «—», а не пустая клетка.
+func TestSummaryNoNodeAtAll(t *testing.T) {
+	in := []parser.Backup{
+		{Environment: "KT", Label: "MONGODB_BACKUP", Type: "MongoDB", Status: parser.StatusError},
+	}
+	if got := SummaryRows(Aggregate(in))[1][6]; got != "—" {
+		t.Errorf("Node = %q, ожидал «—»", got)
 	}
 }

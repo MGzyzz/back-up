@@ -17,15 +17,35 @@ google:
   token_path: ./data/google_token.json
   retention_days: 30
 
-# LABELS из сообщения -> тип бэкапа в отчёте.
-# Неизвестная метка не ломает разбор: тип станет UNKNOWN, в лог уйдёт WARN.
+# LABELS из сообщения -> как бэкап называется в отчёте.
+#
+# Строка сводки заводится на каждую МЕТКУ, а не на тип, поэтому имена должны
+# различать задачи: MINIO_BACKUPS и MINIO_BACKUPS_AI_BUCKET — два разных
+# бэкапа, и одинаковое имя "MinIO" сделало бы сводку нечитаемой.
+# Если две метки в одном окружении получат одно имя, сервис напишет WARN.
+#
+# Метки, которой здесь нет, сервис даст имя UNKNOWN и напишет WARN с её
+# названием — по нему строку и дописывают.
 labels:
+  # PostgreSQL. PGBACKREST и PGBACKREST_BACKUP делят имя намеренно:
+  # похоже на одну задачу до и после переименования метки. Если обе
+  # придут в одном окружении в один день — сработает WARN, тогда развести.
   PGBACKREST: PostgreSQL
   PGBACKREST_BACKUP: PostgreSQL
-  PGBACKREST_CLOUD_BACKUP: PostgreSQL
-  POSTGRES-LASTBACKUP: PostgreSQL
+  PGBACKREST_CLOUD_BACKUP: PostgreSQL Cloud
+  # Опечатка на стороне отправителя: PGBACKERST вместо PGBACKREST.
+  # Ключ обязан совпадать с тем, что реально приходит в канал, — не «чинить».
+  PGBACKERST_VK_CLOUD_BACKUP: PostgreSQL VK Cloud
+  POSTGRES-LASTBACKUP: PostgreSQL LastBackup
+
+  # MongoDB
   MONGODB_BACKUP: MongoDB
-  MONGODB_BACKUP_REMOTE_REPO: MongoDB
+  MONGODB_BACKUP_REMOTE_REPO: MongoDB Remote
+
+  # MinIO
   MINIO_BACKUPS: MinIO
-  MINIO_BACKUPS_AI_BUCKET: MinIO
-  MINIO_VK_CLOUD_BACKUP: MinIO
+  MINIO_BACKUPS_AI_BUCKET: MinIO AI
+  MINIO_VK_CLOUD_BACKUP: MinIO VK Cloud
+
+  # etcd. Метка приходит с пробелами, а не подчёркиваниями — отсюда кавычки.
+  "TELEPORT ETCD BACKUP": Teleport etcd

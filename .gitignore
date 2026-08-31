@@ -1,15 +1,15 @@
 # секреты и данные — в репозиторий не попадают
 config.yaml
-*.json
+env.sh
 data/
+secrets/
+*.session
 *.db
 *.db-wal
 *.db-shm
 
+# токены и клиентские файлы OAuth; фикстуры тестов лежат в *.txt
+*.json
 
 # скомпилированный бинарник
 /backup-report
-data/
-*.session
-env.sh
-secrets/

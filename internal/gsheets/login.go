@@ -2,7 +2,10 @@ package gsheets
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,6 +15,15 @@ import (
 
 	"golang.org/x/oauth2"
 )
+
+// randomState — одноразовая метка запроса OAuth.
+func randomState() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("сгенерировать state: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
 
 // Login проводит вход через браузер и сохраняет токен. Запускается руками,
 // один раз: обычный запуск браузер не открывает — под cron его некому закрыть.
@@ -30,22 +42,37 @@ func Login(ctx context.Context, clientSecretPath, tokenPath string) error {
 	defer ln.Close()
 	cfg.RedirectURL = fmt.Sprintf("http://127.0.0.1:%d/callback", ln.Addr().(*net.TCPAddr).Port)
 
+	// state связывает наш запрос с ответом, который придёт на localhost.
+	// Константа тут не годится: без сверки любой сайт, открытый в том же
+	// браузере, может дёрнуть наш /callback со своим кодом.
+	state, err := randomState()
+	if err != nil {
+		return err
+	}
+
 	codeCh := make(chan string, 1)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		code := r.URL.Query().Get("code")
+		q := r.URL.Query()
+		if q.Get("state") != state {
+			http.Error(w, "чужой state — запрос отклонён", http.StatusForbidden)
+			return
+		}
+		code := q.Get("code")
 		if code == "" {
-			http.Error(w, "нет кода: "+r.URL.Query().Get("error"), http.StatusBadRequest)
+			http.Error(w, "нет кода: "+q.Get("error"), http.StatusBadRequest)
 			return
 		}
 		fmt.Fprintln(w, "Готово. Возвращайся в терминал.")
 		codeCh <- code
 	})}
-	go srv.Serve(ln)
+	// Ошибка Serve здесь всегда ErrServerClosed из defer ниже: значимый отказ
+	// вылезет таймаутом ожидания кода.
+	go func() { _ = srv.Serve(ln) }()
 	defer srv.Close()
 
 	// AccessTypeOffline + ApprovalForce гарантируют выдачу refresh-токена:
 	// без него сервис не сможет работать без браузера.
-	url := cfg.AuthCodeURL("state", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
+	url := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
 	fmt.Println("\nОткрой в браузере:\n\n" + url)
 	fmt.Println("\n(приложение не проверено — «Дополнительные настройки» → «Перейти»)")
 
@@ -55,7 +82,7 @@ func Login(ctx context.Context, clientSecretPath, tokenPath string) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-time.After(3 * time.Minute):
-		return fmt.Errorf("не дождался подтверждения в браузере")
+		return errors.New("не дождался подтверждения в браузере")
 	}
 
 	tok, err := cfg.Exchange(ctx, code)
@@ -63,7 +90,7 @@ func Login(ctx context.Context, clientSecretPath, tokenPath string) error {
 		return fmt.Errorf("обменять код на токен: %w", err)
 	}
 	if tok.RefreshToken == "" {
-		return fmt.Errorf("Google не выдал refresh-токен: сервис не сможет работать без браузера")
+		return errors.New("Google не выдал refresh-токен: сервис не сможет работать без браузера")
 	}
 
 	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o700); err != nil {

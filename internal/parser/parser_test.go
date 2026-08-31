@@ -98,7 +98,6 @@ func TestParse(t *testing.T) {
 				Status:      StatusSuccess,
 				Start:       at(1, 0, 2),
 				End:         at(7, 31, 4),
-				Day:         at(0, 0, 0),
 			},
 		},
 		{
@@ -112,7 +111,6 @@ func TestParse(t *testing.T) {
 				Status:      StatusSuccess,
 				Start:       at(1, 0, 3),
 				End:         at(5, 20, 52),
-				Day:         at(0, 0, 0),
 			},
 		},
 		{
@@ -128,7 +126,6 @@ func TestParse(t *testing.T) {
 				Status:      StatusError,
 				Start:       time.Time{},
 				End:         time.Time{},
-				Day:         at(0, 0, 0),
 			},
 		},
 		{
@@ -165,7 +162,6 @@ func TestParse(t *testing.T) {
 				Status:      StatusSuccess,
 				Start:       at(1, 0, 0),
 				End:         at(1, 30, 0),
-				Day:         at(0, 0, 0),
 			},
 		},
 		{
@@ -183,7 +179,6 @@ func TestParse(t *testing.T) {
 				Status:      StatusFailed,
 				Start:       at(2, 0, 0),
 				End:         at(2, 10, 0),
-				Day:         at(0, 0, 0),
 			},
 		},
 		{
@@ -202,7 +197,6 @@ func TestParse(t *testing.T) {
 				Node:        "kt-minio02",
 				Type:        "MinIO",
 				Status:      StatusError,
-				Day:         at(0, 0, 0),
 			},
 		},
 		{
@@ -278,9 +272,6 @@ func TestParse(t *testing.T) {
 			}
 			if !got.End.Equal(tt.want.End) {
 				t.Errorf("End = %v, ожидал %v", got.End, tt.want.End)
-			}
-			if !got.Day.Equal(tt.want.Day) {
-				t.Errorf("Day = %v, ожидал %v", got.Day, tt.want.Day)
 			}
 		})
 	}

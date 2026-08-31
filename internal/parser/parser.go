@@ -28,8 +28,9 @@ const (
 	TypeUnknown   = "UNKNOWN"
 )
 
-// RawMessage — сообщение как его отдаёт источник. Date нужна как запасной
-// способ определить день: у сообщений со статусом ERROR времён внутри текста нет.
+// RawMessage — сообщение как его отдаёт источник. Date — время доставки
+// в Telegram; разбору она не нужна, но попадает в логи как привязка
+// предупреждения к конкретному сообщению в канале.
 type RawMessage struct {
 	Date time.Time
 	Text string
@@ -37,12 +38,15 @@ type RawMessage struct {
 
 type Backup struct {
 	Environment string
-	Node        string    // может быть пустым
-	Type        string    // PostgreSQL | MongoDB | MinIO | UNKNOWN
-	Status      string    // SUCCESS | FAILED | ERROR
-	Start       time.Time // нулевое время = не указано (бывает у ERROR)
-	End         time.Time // нулевое время = не указано (бывает у ERROR)
-	Day         time.Time // начало суток, к которым отнесён бэкап
+	Node        string // может быть пустым
+	// Label — исходное значение LABELS. Именно оно, а не Type, отличает
+	// задачи друг от друга: MINIO_BACKUPS и MINIO_BACKUPS_AI_BUCKET
+	// оба дают тип MinIO, но это два разных бэкапа.
+	Label  string
+	Type   string    // PostgreSQL | MongoDB | MinIO | UNKNOWN
+	Status string    // SUCCESS | FAILED | ERROR
+	Start  time.Time // нулевое время = не указано (бывает у ERROR)
+	End    time.Time // нулевое время = не указано (бывает у ERROR)
 }
 
 // HasTimes сообщает, есть ли у бэкапа измеренная длительность.
@@ -120,25 +124,22 @@ func Parse(m RawMessage, labels map[string]string, loc *time.Location) (Backup, 
 		}
 	}
 
-	typ, ok := labels[trimNoise(fields["LABELS"])]
+	label := trimNoise(fields["LABELS"])
+	typ, ok := labels[label]
 	if !ok {
 		typ = TypeUnknown
 	}
 
-	// День берём из начала бэкапа, а если его нет — из даты самого сообщения.
-	d := m.Date
-	if !start.IsZero() {
-		d = start
-	}
-	d = d.In(loc)
-
+	// Суток у Backup нет намеренно: к какому дню отнести бэкап, решает не
+	// парсер, а выборка сообщений за сутки в источнике. Держать здесь второе,
+	// расходящееся мнение о той же дате — источник тихих расхождений в отчёте.
 	return Backup{
 		Environment: trimNoise(fields["ENVIRONMENT"]),
 		Node:        fields["NODE"],
+		Label:       label,
 		Type:        typ,
 		Status:      status,
 		Start:       start,
 		End:         end,
-		Day:         time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc),
 	}, nil
 }

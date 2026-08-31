@@ -30,24 +30,25 @@ var ErrNoSession = errors.New("нет сессии Telegram: запусти с �
 // pageSize — сколько сообщений просить за один запрос истории.
 const pageSize = 100
 
-type Client struct {
-	apiID       int
-	apiHash     string
-	phone       string
-	sessionPath string
-	channelID   int64
-	loc         *time.Location
+// Config — всё, что нужно клиенту для работы. Структура, а не список
+// аргументов: три строки подряд в сигнатуре легко переставить местами,
+// и компилятор об этом не скажет ни слова.
+type Config struct {
+	APIID       int
+	APIHash     string
+	Phone       string
+	SessionPath string
+	ChannelID   int64
+	Location    *time.Location
 }
 
-func New(apiID int, apiHash, phone, sessionPath string, channelID int64, loc *time.Location) *Client {
-	return &Client{
-		apiID:       apiID,
-		apiHash:     apiHash,
-		phone:       phone,
-		sessionPath: sessionPath,
-		channelID:   NormalizeChannelID(channelID),
-		loc:         loc,
-	}
+type Client struct {
+	cfg       Config
+	channelID int64 // ID, приведённый к виду MTProto
+}
+
+func New(cfg Config) *Client {
+	return &Client{cfg: cfg, channelID: NormalizeChannelID(cfg.ChannelID)}
 }
 
 // NormalizeChannelID приводит ID канала к виду MTProto.
@@ -77,11 +78,11 @@ func dayBounds(day time.Time, loc *time.Location) (from, to time.Time) {
 // run поднимает соединение и отдаёт управление fn. Всё общение с Telegram
 // обязано происходить внутри Run: снаружи соединения ещё/уже нет.
 func (c *Client) run(ctx context.Context, fn func(ctx context.Context, tgc *telegram.Client) error) error {
-	if err := os.MkdirAll(filepath.Dir(c.sessionPath), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(c.cfg.SessionPath), 0o700); err != nil {
 		return fmt.Errorf("создать каталог сессии: %w", err)
 	}
-	tgc := telegram.NewClient(c.apiID, c.apiHash, telegram.Options{
-		SessionStorage: &session.FileStorage{Path: c.sessionPath},
+	tgc := telegram.NewClient(c.cfg.APIID, c.cfg.APIHash, telegram.Options{
+		SessionStorage: &session.FileStorage{Path: c.cfg.SessionPath},
 		NoUpdates:      true, // читаем историю, эфир не слушаем
 	})
 	return tgc.Run(ctx, func(ctx context.Context) error { return fn(ctx, tgc) })
@@ -118,20 +119,20 @@ func (c *Client) Login(ctx context.Context) error {
 			return strings.TrimSpace(line), err
 		})
 		flow := auth.NewFlow(
-			auth.Constant(c.phone, os.Getenv("TELEGRAM_2FA_PASSWORD"), code),
+			auth.Constant(c.cfg.Phone, os.Getenv("TELEGRAM_2FA_PASSWORD"), code),
 			auth.SendCodeOptions{},
 		)
 		if err := tgc.Auth().IfNecessary(ctx, flow); err != nil {
 			return fmt.Errorf("вход: %w", err)
 		}
-		fmt.Println("вход выполнен, сессия сохранена в", c.sessionPath)
+		fmt.Println("вход выполнен, сессия сохранена в", c.cfg.SessionPath)
 		return nil
 	})
 }
 
 // FetchDay выгружает сообщения канала за указанные сутки.
 func (c *Client) FetchDay(ctx context.Context, day time.Time) ([]parser.RawMessage, error) {
-	from, to := dayBounds(day, c.loc)
+	from, to := dayBounds(day, c.cfg.Location)
 
 	var out []parser.RawMessage
 	err := c.run(ctx, func(ctx context.Context, tgc *telegram.Client) error {
@@ -251,11 +252,17 @@ func fetchRange(ctx context.Context, api *tg.Client, peer tg.InputPeerClass, fro
 		}
 
 		for _, m := range msgs {
+			// Сдвиг offset до разбора типа и без условий: если целая страница
+			// окажется служебными сообщениями, а offset обновляется только для
+			// обычных, следующий запрос уйдёт тем же самым — и цикл станет
+			// бесконечным. Процесс не упадёт, а зависнет, и планировщик
+			// об этом не узнает.
+			offsetID = m.GetID()
+
 			msg, ok := m.(*tg.Message)
 			if !ok {
 				continue // служебное сообщение
 			}
-			offsetID = msg.ID
 			at := time.Unix(int64(msg.Date), 0)
 			if at.Before(from) {
 				return out, nil // ушли за начало суток

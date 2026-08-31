@@ -3,11 +3,13 @@
 //
 // Обычный режим — один проход и выход: расписание задаёт cron. Флаг -daemon
 // включает ожидание времени из конфига, если внешнего планировщика нет.
+//
+// Здесь только разбор флагов, интерактивные режимы настройки и сборка
+// зависимостей; сама работа сервиса живёт в internal/app.
 package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -16,9 +18,9 @@ import (
 	"syscall"
 	"time"
 
+	"backup-report/internal/app"
 	"backup-report/internal/config"
 	"backup-report/internal/gsheets"
-	"backup-report/internal/parser"
 	"backup-report/internal/report"
 	"backup-report/internal/telegram"
 )
@@ -39,7 +41,7 @@ func parseFlags() options {
 	flag.StringVar(&o.date, "date", "", "день отчёта в виде 2026-08-28; по умолчанию сегодня")
 	flag.BoolVar(&o.login, "login", false, "интерактивный вход в Telegram и Google, потом выход")
 	flag.BoolVar(&o.channels, "channels", false, "показать каналы аккаунта с их ID и выйти")
-	flag.BoolVar(&o.dryRun, "dry-run", false, "показать, что было бы удалено, и ничего не делать")
+	flag.BoolVar(&o.dryRun, "dry-run", false, "старые отчёты не удалять, только показать их в логе; отчёт при этом публикуется")
 	flag.BoolVar(&o.daemon, "daemon", false, "не выходить, а ждать schedule.report_at из конфига")
 	flag.Parse()
 	return o
@@ -62,42 +64,80 @@ func main() {
 	}
 }
 
-// run выбирает режим работы. Каждый режим — отдельная функция ниже.
+// run выбирает режим работы и собирает зависимости.
 func run(ctx context.Context, opts options) error {
 	cfg, err := config.LoadConfig(opts.configPath)
 	if err != nil {
 		return err
 	}
 
-	tg := telegram.New(
-		cfg.Telegram.APIID, cfg.Telegram.APIHash, cfg.Telegram.Phone,
-		cfg.Telegram.SessionPath, cfg.Telegram.ChannelID, cfg.Location(),
-	)
+	tg := telegram.New(telegram.Config{
+		APIID:       cfg.Telegram.APIID,
+		APIHash:     cfg.Telegram.APIHash,
+		Phone:       cfg.Telegram.Phone,
+		SessionPath: cfg.Telegram.SessionPath,
+		ChannelID:   cfg.Telegram.ChannelID,
+		Location:    cfg.Location(),
+	})
 
+	// Интерактивные режимы настройки: Google-клиент им не нужен.
 	switch {
 	case opts.login:
 		return runLogin(ctx, cfg, tg)
 	case opts.channels:
 		return runChannels(ctx, tg)
-	case opts.daemon:
-		return runDaemon(ctx, cfg, tg, opts.dryRun)
 	}
 
-	day, err := reportDay(opts.date, cfg.Location())
+	// Google поднимаем до выгрузки истории: если токен протух, дешевле
+	// узнать об этом сразу, чем после нескольких минут чтения канала.
+	sink, err := gsheets.Connect(ctx, gsheets.Config{
+		ClientSecretPath: cfg.Google.OAuthClientPath,
+		TokenPath:        cfg.Google.TokenPath,
+		FolderID:         cfg.Google.FolderID,
+		Logger:           slog.Default(),
+	})
 	if err != nil {
 		return err
 	}
-	return runOnce(ctx, cfg, tg, day, opts.dryRun)
+
+	hh, mm := cfg.ReportTime()
+	svc := app.New(app.Options{
+		Labels:        cfg.Labels,
+		Location:      cfg.Location(),
+		RetentionDays: cfg.Google.RetentionDays,
+		ReportHH:      hh,
+		ReportMM:      mm,
+	}, tg, sink, slog.Default())
+	if opts.daemon {
+		return svc.Daemon(ctx, opts.dryRun)
+	}
+
+	day, err := reportDay(opts.date, time.Now(), cfg.Location())
+	if err != nil {
+		return err
+	}
+	return svc.Once(ctx, day, opts.dryRun)
 }
 
 // reportDay возвращает день, за который строим отчёт: из флага или сегодняшний.
-func reportDay(dateStr string, loc *time.Location) (time.Time, error) {
+func reportDay(dateStr string, now time.Time, loc *time.Location) (time.Time, error) {
+	now = now.In(loc)
 	if dateStr == "" {
-		return time.Now().In(loc), nil
+		return now, nil
 	}
-	day, err := time.ParseInLocation("2006-01-02", dateStr, loc)
+	day, err := time.ParseInLocation(report.DateLayout, dateStr, loc)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("-date %q: ожидается формат 2006-01-02: %w", dateStr, err)
+		return time.Time{}, fmt.Errorf("-date %q: ожидается формат %s: %w", dateStr, report.DateLayout, err)
+	}
+
+	// День ещё не наступил: сообщений за него быть не может, а пустой отчёт
+	// займёт имя и заблокирует настоящий, когда день придёт, — сервис увидит
+	// готовый файл и молча пропустит публикацию.
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	if day.After(today) {
+		return time.Time{}, fmt.Errorf(
+			"-date %s: день ещё не наступил (сегодня %s); пустой отчёт занял бы имя и заблокировал настоящий",
+			dateStr, today.Format(report.DateLayout))
 	}
 	return day, nil
 }
@@ -128,150 +168,4 @@ func runChannels(ctx context.Context, tg *telegram.Client) error {
 		fmt.Printf("%-14d %s\n", ch.ID, ch.Title)
 	}
 	return nil
-}
-
-// runOnce — вся работа сервиса: прочитать сутки, разобрать, опубликовать, прибрать.
-func runOnce(ctx context.Context, cfg *config.Config, tg *telegram.Client, day time.Time, dryRun bool) error {
-	name := report.ReportName(day)
-	slog.Info("строю отчёт", "day", day.Format("2006-01-02"), "file", name)
-
-	raws, err := tg.FetchDay(ctx, day)
-	if err != nil {
-		return fmt.Errorf("прочитать канал: %w", err)
-	}
-
-	backups, skipped := parseAll(raws, cfg.Labels, cfg.Location())
-	slog.Info("сообщения разобраны",
-		"всего", len(raws), "бэкапов", len(backups), "пропущено", skipped)
-
-	gc, err := gsheets.Connect(ctx, cfg.Google.OAuthClientPath, cfg.Google.TokenPath, cfg.Google.FolderID)
-	if err != nil {
-		return err
-	}
-
-	files, err := gc.List(ctx)
-	if err != nil {
-		return err
-	}
-
-	// Отчёт за день должен быть один. Проверка листингом дешевле,
-	// чем разбираться потом с двумя файлами на одну дату. Тот же список
-	// уходит в чистку — созданный сейчас файл в него не попадает,
-	// поэтому удалить сам себя запуск не может.
-	if id, ok := findByName(files, name); ok {
-		slog.Warn("отчёт за этот день уже есть, публикацию пропускаю", "file_id", id)
-	} else {
-		rows := report.BuildRows(backups)
-		id, err := gc.Publish(ctx, name, rows)
-		if err != nil {
-			return err
-		}
-		slog.Info("отчёт опубликован", "file_id", id, "строк", len(rows)-1)
-	}
-
-	cleanup(ctx, gc, files, cfg.Google.RetentionDays, cfg.Location(), dryRun)
-	return nil
-}
-
-// parseAll разбирает сообщения, отделяя штатные пропуски от сломанных.
-func parseAll(raws []parser.RawMessage, labels map[string]string, loc *time.Location) ([]parser.Backup, int) {
-	var backups []parser.Backup
-	skipped := 0
-
-	for _, m := range raws {
-		b, err := parser.Parse(m, labels, loc)
-		switch {
-		case err == nil:
-			warnAnomalies(b, m.Date)
-			backups = append(backups, b)
-		case errors.Is(err, parser.ErrNotBackupMessage):
-			skipped++ // чужое уведомление или восстановление — это норма
-		default:
-			// Сломанный формат: одно сообщение не должно ронять весь отчёт,
-			// но человек обязан об этом узнать.
-			skipped++
-			slog.Warn("не разобрал сообщение", "at", m.Date.Format(time.RFC3339), "err", err)
-		}
-	}
-	return backups, skipped
-}
-
-// warnAnomalies сообщает о странностях, которые не мешают строке попасть
-// в отчёт, но человеку о них знать стоит.
-func warnAnomalies(b parser.Backup, at time.Time) {
-	// ERROR без времён — норма: команда не запускалась. А вот SUCCESS
-	// без времён редкость: источник отчитался об успехе, не сказав, когда.
-	if b.Status == parser.StatusSuccess && !b.HasTimes() {
-		slog.Warn("успешный бэкап без времён",
-			"env", b.Environment, "node", b.Node, "at", at.Format(time.RFC3339))
-	}
-	if b.Type == parser.TypeUnknown {
-		slog.Warn("неизвестная метка LABELS, тип UNKNOWN",
-			"node", b.Node, "at", at.Format(time.RFC3339))
-	}
-}
-
-func findByName(files []gsheets.File, name string) (string, bool) {
-	for _, f := range files {
-		if f.Name == name {
-			return f.ID, true
-		}
-	}
-	return "", false
-}
-
-// cleanup убирает отчёты старше retention_days. Ошибку не возвращает:
-// неудачное удаление логируется и не должно обесценивать построенный отчёт. Дата берётся из имени файла,
-// а не из modifiedTime: последний меняется, когда кто-то просто открыл отчёт.
-func cleanup(ctx context.Context, gc *gsheets.Client, files []gsheets.File, retentionDays int, loc *time.Location, dryRun bool) {
-	now := time.Now().In(loc)
-	cutoff := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).
-		AddDate(0, 0, -retentionDays)
-
-	removed := 0
-	for _, f := range files {
-		if !report.ShouldDelete(f.Name, cutoff) {
-			continue
-		}
-		if dryRun {
-			slog.Info("удалил бы (dry-run)", "file", f.Name)
-			continue
-		}
-		if err := gc.Trash(ctx, f.ID); err != nil {
-			// Неудачное удаление не повод терять уже построенный отчёт.
-			slog.Error("не удалил старый отчёт", "file", f.Name, "err", err)
-			continue
-		}
-		removed++
-		slog.Info("отчёт отправлен в корзину", "file", f.Name)
-	}
-	slog.Info("чистка завершена", "удалено", removed, "граница", cutoff.Format("2006-01-02"))
-}
-
-// runDaemon ждёт schedule.report_at и строит отчёт за наступивший день.
-// Нужен там, где нет cron; при наличии cron проще запускать без флага.
-func runDaemon(ctx context.Context, cfg *config.Config, tg *telegram.Client, dryRun bool) error {
-	hh, mm, err := report.ParseReportAt(cfg.Schedule.ReportAt)
-	if err != nil {
-		return err
-	}
-	for {
-		next := report.NextRun(time.Now(), hh, mm, cfg.Location())
-		slog.Info("следующий отчёт", "at", next.Format(time.RFC3339),
-			"через", time.Until(next).Round(time.Minute).String())
-
-		t := time.NewTimer(time.Until(next))
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			slog.Info("сервис остановлен")
-			return nil
-		case <-t.C:
-		}
-
-		// Отчёт не построился — не повод убивать демон: завтра попробуем снова.
-		if err := runOnce(ctx, cfg, tg, time.Now().In(cfg.Location()), dryRun); err != nil {
-			slog.Error("отчёт не построен", "err", err)
-		}
-	}
 }
