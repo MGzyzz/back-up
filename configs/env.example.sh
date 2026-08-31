@@ -6,11 +6,11 @@
 # env.sh — нельзя, он под .gitignore.
 
 # https://my.telegram.org -> API development tools
-export TELEGRAM_API_ID=1234567
-export TELEGRAM_API_HASH=00000000000000000000000000000000
+export TELEGRAM_API_ID=12345678
+export TELEGRAM_API_HASH=testksljfdjlfkjsl12214
 
 # Телефон аккаунта, который состоит в канале. В международном формате.
-export TELEGRAM_PHONE=+70000000000
+export TELEGRAM_PHONE=+1234556788
 
 # Только для -login и только если на аккаунте включена двухфакторная защита.
 # Для обычных запусков не нужен.
