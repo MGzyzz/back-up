@@ -86,6 +86,12 @@ func newApp(src Source, sink Sink) *App {
 	}, src, sink, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
+// reportNameDaysAgo — имя отчёта за день, отстоящий от сегодня на days назад.
+// Считается от time.Now(), потому что чистку сравнивают с настоящим «сейчас».
+func reportNameDaysAgo(days int) string {
+	return "backup-report-" + time.Now().In(testLoc).AddDate(0, 0, -days).Format("2006-01-02")
+}
+
 func msg(text string) parser.RawMessage {
 	return parser.RawMessage{Date: time.Date(2026, 8, 28, 9, 0, 0, 0, testLoc), Text: text}
 }
@@ -179,8 +185,7 @@ func TestOnceSkipsPublishWhenReportExists(t *testing.T) {
 func TestOnceRemovesOnlyExpiredReports(t *testing.T) {
 	// Граница при retention 30 и «сегодня» = дата запуска теста; берём
 	// заведомо старый и заведомо свежий файлы.
-	old := "backup-report-" + time.Now().In(testLoc).AddDate(0, 0, -40).Format("2006-01-02")
-	fresh := "backup-report-" + time.Now().In(testLoc).AddDate(0, 0, -2).Format("2006-01-02")
+	old, fresh := reportNameDaysAgo(40), reportNameDaysAgo(2)
 	sink := &fakeSink{files: []gsheets.File{
 		{ID: "old", Name: old},
 		{ID: "fresh", Name: fresh},
@@ -197,7 +202,7 @@ func TestOnceRemovesOnlyExpiredReports(t *testing.T) {
 }
 
 func TestOnceDryRunKeepsFiles(t *testing.T) {
-	old := "backup-report-" + time.Now().In(testLoc).AddDate(0, 0, -40).Format("2006-01-02")
+	old := reportNameDaysAgo(40)
 	sink := &fakeSink{files: []gsheets.File{{ID: "old", Name: old}}}
 
 	if err := newApp(&fakeSource{}, sink).Once(context.Background(), day(), true); err != nil {
@@ -214,7 +219,7 @@ func TestOnceDryRunKeepsFiles(t *testing.T) {
 
 // Неудачное удаление одного файла не должно обесценивать построенный отчёт.
 func TestOnceSurvivesTrashFailure(t *testing.T) {
-	old := "backup-report-" + time.Now().In(testLoc).AddDate(0, 0, -40).Format("2006-01-02")
+	old := reportNameDaysAgo(40)
 	sink := &fakeSink{
 		files:    []gsheets.File{{ID: "old", Name: old}},
 		trashErr: errors.New("Drive недоступен"),
@@ -239,7 +244,7 @@ func TestOnceFailsOnFetchError(t *testing.T) {
 
 // Публикация не удалась — чистку не запускаем: сначала отчёт, потом уборка.
 func TestOnceDoesNotCleanupAfterPublishFailure(t *testing.T) {
-	old := "backup-report-" + time.Now().In(testLoc).AddDate(0, 0, -40).Format("2006-01-02")
+	old := reportNameDaysAgo(40)
 	boom := errors.New("Sheets недоступен")
 	sink := &fakeSink{
 		files:      []gsheets.File{{ID: "old", Name: old}},

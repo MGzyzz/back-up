@@ -193,6 +193,7 @@ CHANNEL_ID     НАЗВАНИЕ
 main.go                 флаги, интерактивные режимы, сборка зависимостей, коды возврата
 internal/app/           последовательность шагов: прочитать, разобрать, опубликовать, прибрать
 internal/config/        конфиг, секреты из окружения, валидация
+internal/dates/         операции над сутками, общие для транспорта и отчёта
 internal/parser/        разбор текста сообщения в структуру Backup
 internal/report/        свёртка бэкапов в задачи, строки обеих таблиц, правило хранения
 internal/telegram/      MTProto: вход, поиск канала, чтение истории за сутки
@@ -207,13 +208,14 @@ go test ./...
 Проходят без интернета, без сессии Telegram и без токенов Google.
 
 ```
+internal/dates    100.0%
 internal/parser    97.7%
-internal/report    95.0%
+internal/report    95.1%
 internal/config    90.2%
 internal/app       81.4%
-internal/gsheets   25.8%
+internal/gsheets   33.9%
+internal/telegram  20.9%
 main               13.0%
-internal/telegram   8.5%
 ```
 
 Низкие два числа — осознанный размен. MTProto нельзя

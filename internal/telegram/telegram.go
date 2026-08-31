@@ -21,6 +21,7 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
+	"backup-report/internal/dates"
 	"backup-report/internal/parser"
 )
 
@@ -31,9 +32,7 @@ var ErrNoSession = errors.New("нет сессии Telegram: запусти с �
 // pageSize — сколько сообщений просить за один запрос истории.
 const pageSize = 100
 
-// Config — всё, что нужно клиенту для работы. Структура, а не список
-// аргументов: три строки подряд в сигнатуре легко переставить местами,
-// и компилятор об этом не скажет ни слова.
+// Config — всё, что нужно клиенту для работы.
 type Config struct {
 	APIID       int
 	APIHash     string
@@ -54,8 +53,8 @@ func New(cfg Config) *Client {
 
 // NormalizeChannelID приводит ID канала к виду MTProto.
 //
-// В Bot API тот же канал выглядит как -1001234567890, в MTProto — как 1234567890.
-// Конфиг может содержать любой из двух
+// В Bot API тот же канал выглядит как -1001234567890, в MTProto — как
+// 1234567890. Конфиг принимает любой из двух видов.
 func NormalizeChannelID(id int64) int64 {
 	if id >= 0 {
 		return id
@@ -71,8 +70,7 @@ func NormalizeChannelID(id int64) int64 {
 
 // dayBounds возвращает полуинтервал [начало суток, начало следующих) в зоне loc.
 func dayBounds(day time.Time, loc *time.Location) (from, to time.Time) {
-	d := day.In(loc)
-	from = time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc)
+	from = dates.StartOfDay(day, loc)
 	return from, from.AddDate(0, 0, 1)
 }
 
@@ -89,8 +87,18 @@ func (c *Client) run(ctx context.Context, fn func(ctx context.Context, tgc *tele
 	return tgc.Run(ctx, func(ctx context.Context) error { return fn(ctx, tgc) })
 }
 
+// runAuthed — то же, что run, но перед вызовом fn проверяет сессию.
+// Так работает всё, кроме самого входа.
+func (c *Client) runAuthed(ctx context.Context, fn func(ctx context.Context, tgc *telegram.Client) error) error {
+	return c.run(ctx, func(ctx context.Context, tgc *telegram.Client) error {
+		if err := requireSession(ctx, tgc); err != nil {
+			return err
+		}
+		return fn(ctx, tgc)
+	})
+}
+
 // requireSession проверяет, что сохранённая сессия действительна.
-// Под cron спросить код некому, поэтому это проверка, а не вход.
 func requireSession(ctx context.Context, tgc *telegram.Client) error {
 	status, err := tgc.Auth().Status(ctx)
 	if err != nil {
@@ -111,13 +119,12 @@ func (c *Client) Login(ctx context.Context) error {
 			fmt.Println("сессия уже действительна, вход не требуется")
 			return nil
 		case !errors.Is(err, ErrNoSession):
-			return err // сеть или протокол — входить бессмысленно
+			return err // сеть или протокол
 		}
 
 		code := auth.CodeAuthenticatorFunc(func(_ context.Context, sent *tg.AuthSentCode) (string, error) {
 			// Способ доставки выбирает Telegram, а не мы: если на номере уже
-			// есть активная сессия, код уходит в само приложение, и человек
-			// напрасно ждёт SMS. Поэтому говорим, куда именно смотреть.
+			// есть активная сессия, код уходит в само приложение.
 			fmt.Printf("код отправлен: %s\n", describeCodeType(sent))
 			if hint := resendHint(sent); hint != "" {
 				fmt.Println(hint)
@@ -131,9 +138,9 @@ func (c *Client) Login(ctx context.Context) error {
 			auth.SendCodeOptions{},
 		)
 		if err := tgc.Auth().IfNecessary(ctx, flow); err != nil {
-			// Антифлуд Telegram выглядит как обычная ошибка протокола, хотя
-			// чинится только ожиданием. Говорим об этом прямо, иначе человек
-			// будет дёргать -login по кругу и продлевать себе запрет.
+			// Антифлуд выглядит как обычная ошибка протокола, а чинится
+			// только ожиданием. Без явного сообщения человек будет дёргать
+			// -login по кругу и продлевать себе запрет.
 			if d, ok := tgerr.AsFloodWait(err); ok {
 				return fmt.Errorf("Telegram временно отказывает в коде (антифлуд): повтори через %s. "+
 					"Так бывает, когда код запрашивали много раз подряд", d.Round(time.Second))
@@ -171,10 +178,8 @@ func describeCodeType(sent *tg.AuthSentCode) string {
 	}
 }
 
-// resendHint пересказывает, что Telegram обещает сделать, если код не дошёл:
-// через сколько можно повторить запрос и каким способом придёт следующий.
-// Без этого человек сидит перед немым приглашением и не знает, ждать ему
-// или уже бесполезно.
+// resendHint пересказывает, что Telegram обещает, если код не дошёл: через
+// сколько можно повторить запрос и каким способом придёт следующий.
 func resendHint(sent *tg.AuthSentCode) string {
 	if sent == nil {
 		return ""
@@ -214,10 +219,7 @@ func (c *Client) FetchDay(ctx context.Context, day time.Time) ([]parser.RawMessa
 	from, to := dayBounds(day, c.cfg.Location)
 
 	var out []parser.RawMessage
-	err := c.run(ctx, func(ctx context.Context, tgc *telegram.Client) error {
-		if err := requireSession(ctx, tgc); err != nil {
-			return err
-		}
+	err := c.runAuthed(ctx, func(ctx context.Context, tgc *telegram.Client) error {
 		api := tgc.API()
 		peer, err := c.resolvePeer(ctx, api)
 		if err != nil {
@@ -239,10 +241,7 @@ type Channel struct {
 // неоткуда взять, а без него сервис не знает, что читать.
 func (c *Client) ListChannels(ctx context.Context) ([]Channel, error) {
 	var out []Channel
-	err := c.run(ctx, func(ctx context.Context, tgc *telegram.Client) error {
-		if err := requireSession(ctx, tgc); err != nil {
-			return err
-		}
+	err := c.runAuthed(ctx, func(ctx context.Context, tgc *telegram.Client) error {
 		chats, err := dialogChats(ctx, tgc.API())
 		if err != nil {
 			return err
@@ -331,11 +330,10 @@ func fetchRange(ctx context.Context, api *tg.Client, peer tg.InputPeerClass, fro
 		}
 
 		for _, m := range msgs {
-			// Сдвиг offset до разбора типа и без условий: если целая страница
-			// окажется служебными сообщениями, а offset обновляется только для
-			// обычных, следующий запрос уйдёт тем же самым — и цикл станет
-			// бесконечным. Процесс не упадёт, а зависнет, и планировщик
-			// об этом не узнает.
+			// Сдвигаем offset до разбора типа и без условий: если целая
+			// страница окажется служебными сообщениями, а offset двигать
+			// только на обычных, следующий запрос уйдёт тем же самым
+			// и цикл станет бесконечным.
 			offsetID = m.GetID()
 
 			msg, ok := m.(*tg.Message)

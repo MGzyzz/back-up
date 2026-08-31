@@ -36,9 +36,8 @@ type Config struct {
 
 	rawAPIID string // TELEGRAM_API_ID как пришёл из окружения, до разбора
 
-	// Производные значения. Их заполняет prepare, а его зовёт только
-	// LoadConfig — поэтому у любого собранного конфига они корректны,
-	// и Location() никогда не вернёт nil.
+	// Производные значения: их заполняет prepare, а его зовёт только
+	// LoadConfig — поэтому Location() никогда не вернёт nil.
 	loc      *time.Location
 	reportHH int
 	reportMM int
@@ -50,7 +49,8 @@ func (c *Config) Location() *time.Location { return c.loc }
 // ReportTime — schedule.report_at, разобранное на часы и минуты.
 func (c *Config) ReportTime() (hh, mm int) { return c.reportHH, c.reportMM }
 
-// Загрузка конфига
+// LoadConfig читает файл, добирает секреты из окружения и проверяет,
+// что заполнено всё обязательное.
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -123,8 +123,7 @@ func (c *Config) prepare() error {
 		errs = append(errs, errors.New("labels не может быть пустым"))
 	}
 
-	// Время разбирается здесь один раз: дальше по коду его берут
-	// готовым через ReportTime, а не парсят строку заново.
+	// Разбираем один раз: дальше время берут готовым через ReportTime.
 	if t, err := time.Parse("15:04", c.Schedule.ReportAt); err != nil {
 		errs = append(errs, fmt.Errorf("schedule.report_at %q: %w", c.Schedule.ReportAt, err))
 	} else {

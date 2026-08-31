@@ -1,8 +1,7 @@
 // Package gsheets публикует отчёты в Google Sheets и убирает старые.
 //
 // Авторизация — OAuth от живого пользователя со scope drive.file: приложение
-// видит только созданные им самим файлы. Чужое оно не тронет физически,
-// поэтому чистка безопасна по построению, а не по аккуратности кода.
+// видит только созданные им самим файлы, поэтому чистка не может задеть чужой.
 package gsheets
 
 import (
@@ -44,9 +43,7 @@ type Sheet struct {
 	StatusCol int
 	Colors    []ColorRule
 	// Widths — ширина колонок в пикселях. Ноль или отсутствие значения
-	// означает «подогнать по содержимому». Автоподгонка ужимает колонку
-	// впритык, без запаса, а в заголовке ещё стоит кнопка автофильтра —
-	// поэтому колонкам с длинными значениями ширину задают явно.
+	// означает «подогнать по содержимому».
 	Widths []int
 }
 
@@ -62,9 +59,7 @@ type Config struct {
 	ClientSecretPath string
 	TokenPath        string
 	FolderID         string
-	// Logger необязателен; nil означает slog.Default(). Пакет не решает
-	// за приложение, куда писать логи, — он их только отдаёт.
-	Logger *slog.Logger
+	Logger           *slog.Logger // nil = slog.Default()
 }
 
 type Client struct {
@@ -106,11 +101,9 @@ func Connect(ctx context.Context, c Config) (*Client, error) {
 
 // Publish создаёт таблицу с именем name в папке отчётов и заливает в неё листы.
 //
-// Создание файла и заливка данных — несколько отдельных вызовов API, и между
-// ними возможен сбой. Пустой файл с правильным именем хуже, чем никакого:
-// следующий запуск нашёл бы его по имени, счёл отчёт готовым и больше никогда
-// за этот день ничего бы не построил. Поэтому недописанный файл убирается
-// за собой.
+// Создание файла и заливка данных — разные вызовы API, между ними возможен
+// сбой. Пустой файл с правильным именем хуже, чем никакого: следующий запуск
+// счёл бы отчёт за этот день готовым. Поэтому недописанный файл убирается.
 func (c *Client) Publish(ctx context.Context, name string, tabs []Sheet) (id string, err error) {
 	if len(tabs) == 0 {
 		return "", errors.New("нечего публиковать: ни одного листа")
@@ -154,8 +147,8 @@ func (c *Client) Publish(ctx context.Context, name string, tabs []Sheet) (id str
 		return "", fmt.Errorf("записать строки: %w", err)
 	}
 
-	// Оформление — украшение поверх готовых данных. Если Sheets его отверг,
-	// отчёт всё равно опубликован, и терять его из-за цвета заливки незачем.
+	// Оформление — поверх готовых данных. Если Sheets его отверг, отчёт
+	// всё равно опубликован: терять его из-за цвета заливки незачем.
 	if ferr := c.format(ctx, file.Id, tabs); ferr != nil {
 		c.log.Warn("таблица опубликована, но не оформлена", "file_id", file.Id, "err", ferr)
 	}
@@ -164,9 +157,8 @@ func (c *Client) Publish(ctx context.Context, name string, tabs []Sheet) (id str
 
 // layout переименовывает лист, созданный по умолчанию, и добавляет остальные.
 //
-// Именно поэтому дальше диапазоны адресуются по имени листа: у нового файла
-// первый лист называется "Sheet1" или "Лист1" в зависимости от локали
-// аккаунта, и угадывать это имя не нужно — мы задаём его сами.
+// Имя задаём сами, чтобы дальше адресовать диапазоны по нему: у нового файла
+// первый лист называется "Sheet1" или "Лист1" — смотря какая локаль аккаунта.
 func (c *Client) layout(ctx context.Context, fileID string, tabs []Sheet) error {
 	ss, err := c.sheets.Spreadsheets.Get(fileID).Context(ctx).Do()
 	if err != nil {
@@ -197,12 +189,11 @@ func (c *Client) layout(ctx context.Context, fileID string, tabs []Sheet) error 
 	return nil
 }
 
-// discard убирает файл, который не удалось дописать. Ошибку только логируем:
-// исходная причина сбоя важнее, и подменять её собой она не должна.
+// discard убирает файл, который не удалось дописать. Ошибку только логируем,
+// чтобы не подменять ею исходную причину сбоя.
 //
-// WithoutCancel — потому что типичная причина попасть сюда как раз отмена
-// контекста по SIGTERM: убирать за собой надо и в этом случае, иначе пустой
-// файл переживёт остановку сервиса и заблокирует отчёт за день.
+// WithoutCancel: типичная причина попасть сюда — отмена контекста по SIGTERM,
+// а убрать за собой надо и в этом случае.
 func (c *Client) discard(ctx context.Context, fileID, name string) {
 	if err := c.Trash(context.WithoutCancel(ctx), fileID); err != nil {
 		c.log.Error("не убрал недописанный файл — удали его руками, иначе он заблокирует отчёт за этот день",
@@ -214,9 +205,9 @@ func (c *Client) discard(ctx context.Context, fileID, name string) {
 
 // escapeFormulas обезвреживает ячейки, которые Sheets принял бы за формулу.
 //
-// Значения приходят текстом из чужого канала, а ValueInputOption USER_ENTERED
-// нужен ради дат: без него они легли бы строками. Поэтому даты остаются как
-// есть, а всё, что начинается с = + - @, получает апостроф и остаётся текстом.
+// USER_ENTERED нужен ради дат: без него они легли бы строками. Но значения
+// приходят из чужого канала, поэтому всё, что начинается с = + - @,
+// получает апостроф и остаётся текстом.
 func escapeFormulas(rows [][]any) [][]any {
 	out := make([][]any, len(rows))
 	for i, row := range rows {
@@ -277,14 +268,8 @@ func sheetFormat(sheetID int64, t Sheet) []*sheets.Request {
 
 	// Заливка идёт только по строкам с данными; фильтр, в отличие от неё,
 	// захватывает и заголовок — именно он становится строкой с выпадашками.
-	dataRange := &sheets.GridRange{
-		SheetId: sheetID, StartRowIndex: 1, EndRowIndex: rowCount,
-		StartColumnIndex: 0, EndColumnIndex: colCount,
-	}
-	tableRange := &sheets.GridRange{
-		SheetId: sheetID, StartRowIndex: 0, EndRowIndex: rowCount,
-		StartColumnIndex: 0, EndColumnIndex: colCount,
-	}
+	dataRange := gridRange(sheetID, 1, rowCount, colCount)  // без заголовка
+	tableRange := gridRange(sheetID, 0, rowCount, colCount) // с заголовком
 
 	reqs := []*sheets.Request{
 		{RepeatCell: &sheets.RepeatCellRequest{
@@ -299,9 +284,7 @@ func sheetFormat(sheetID int64, t Sheet) []*sheets.Request {
 			},
 			Fields: "gridProperties.frozenRowCount",
 		}},
-		// Отчёт читают с разными вопросами: «что упало ночью», «как там
-		// Postgres», «все ли окружения закрылись». Вместо того чтобы
-		// угадывать один порядок, отдаём сортировку читателю.
+		// Автофильтр: сортировку и отбор отдаём читателю.
 		{SetBasicFilter: &sheets.SetBasicFilterRequest{
 			Filter: &sheets.BasicFilter{Range: tableRange},
 		}},
@@ -309,8 +292,7 @@ func sheetFormat(sheetID int64, t Sheet) []*sheets.Request {
 	reqs = append(reqs, columnWidths(sheetID, colCount, t.Widths)...)
 
 	// Правила заливки перечислены явно, а не выведены из «не успех»:
-	// в кластере ERROR означает «команда не выполнялась на этой ноде»
-	// и красным быть не должен — иначе штатная работа выглядит как авария.
+	// на кластере ERROR — штатная работа, и красным быть не должен.
 	col := columnLetter(t.StatusCol)
 	for _, rule := range t.Colors {
 		reqs = append(reqs, &sheets.Request{
@@ -320,8 +302,8 @@ func sheetFormat(sheetID int64, t Sheet) []*sheets.Request {
 					BooleanRule: &sheets.BooleanRule{
 						Condition: &sheets.BooleanCondition{
 							Type: "CUSTOM_FORMULA",
-							// Формула без функций: в неё не может вмешаться
-							// локаль листа, разделяющая аргументы точкой с запятой.
+							// Без функций: локаль листа разделяет аргументы
+							// точкой с запятой, и формула с ними бы сломалась.
 							Values: []*sheets.ConditionValue{
 								{UserEnteredValue: fmt.Sprintf(`=$%s2=%q`, col, rule.Value)},
 							},
@@ -337,6 +319,15 @@ func sheetFormat(sheetID int64, t Sheet) []*sheets.Request {
 		})
 	}
 	return reqs
+}
+
+// gridRange — прямоугольник листа от строки fromRow до rowCount
+// по всем колонкам.
+func gridRange(sheetID int64, fromRow, rowCount, colCount int64) *sheets.GridRange {
+	return &sheets.GridRange{
+		SheetId: sheetID, StartRowIndex: fromRow, EndRowIndex: rowCount,
+		StartColumnIndex: 0, EndColumnIndex: colCount,
+	}
 }
 
 // columnWidths расставляет ширины: заданные — явно, остальные — автоподгонкой.
@@ -438,9 +429,9 @@ func (c *Client) Trash(ctx context.Context, fileID string) error {
 	return nil
 }
 
-// quote оформляет значение как строковый литерал запроса Drive. ID папок
-// кавычек не содержат, но неэкранированная подстановка в чужой язык запросов —
-// привычка, которая рано или поздно выстреливает.
+// quote оформляет значение как строковый литерал запроса Drive. ID папки
+// кавычек не содержит, но подставлять в чужой язык запросов без
+// экранирования не стоит.
 func quote(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `'`, `\'`)
 	return "'" + r.Replace(s) + "'"

@@ -20,6 +20,7 @@ import (
 
 	"backup-report/internal/app"
 	"backup-report/internal/config"
+	"backup-report/internal/dates"
 	"backup-report/internal/gsheets"
 	"backup-report/internal/report"
 	"backup-report/internal/telegram"
@@ -59,7 +60,7 @@ func main() {
 
 	if err := run(ctx, opts); err != nil {
 		slog.Error("сервис остановлен с ошибкой", "err", err)
-		// Ненулевой код — единственный способ сказать крону, что отчёт не построен.
+		// По коду возврата крон и узнаёт, что отчёт не построен.
 		os.Exit(1)
 	}
 }
@@ -88,8 +89,8 @@ func run(ctx context.Context, opts options) error {
 		return runChannels(ctx, tg)
 	}
 
-	// Google поднимаем до выгрузки истории: если токен протух, дешевле
-	// узнать об этом сразу, чем после нескольких минут чтения канала.
+	// Google поднимаем до выгрузки истории: про протухший токен дешевле
+	// узнать сразу, чем после нескольких минут чтения канала.
 	sink, err := gsheets.Connect(ctx, gsheets.Config{
 		ClientSecretPath: cfg.Google.OAuthClientPath,
 		TokenPath:        cfg.Google.TokenPath,
@@ -130,10 +131,9 @@ func reportDay(dateStr string, now time.Time, loc *time.Location) (time.Time, er
 		return time.Time{}, fmt.Errorf("-date %q: ожидается формат %s: %w", dateStr, report.DateLayout, err)
 	}
 
-	// День ещё не наступил: сообщений за него быть не может, а пустой отчёт
-	// займёт имя и заблокирует настоящий, когда день придёт, — сервис увидит
-	// готовый файл и молча пропустит публикацию.
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	// День ещё не наступил: сообщений за него нет, а пустой отчёт занял бы
+	// имя — когда день придёт, сервис увидит готовый файл и пропустит его.
+	today := dates.StartOfDay(now, loc)
 	if day.After(today) {
 		return time.Time{}, fmt.Errorf(
 			"-date %s: день ещё не наступил (сегодня %s); пустой отчёт занял бы имя и заблокировал настоящий",
@@ -156,8 +156,7 @@ func runLogin(ctx context.Context, cfg *config.Config, tg *telegram.Client) erro
 	return nil
 }
 
-// runChannels печатает каналы аккаунта. Нужен один раз, на настройке:
-// ID канала неоткуда взять, а без него сервис не знает, что читать.
+// runChannels печатает каналы аккаунта. Нужен один раз, на настройке.
 func runChannels(ctx context.Context, tg *telegram.Client) error {
 	list, err := tg.ListChannels(ctx)
 	if err != nil {

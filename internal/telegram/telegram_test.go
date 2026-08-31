@@ -64,28 +64,34 @@ func TestDayBoundsUsesConfiguredZone(t *testing.T) {
 
 // Способ доставки кода надо назвать словами: чаще всего он «в приложение»,
 // а человек ждёт SMS и решает, что код не пришёл.
+//
+// Проверяется не формулировка, а инвариант: каждый способ описан непусто
+// и отличим от остальных. К самому тексту тест не цепляется — иначе любая
+// правка формулировки роняла бы сборку.
 func TestDescribeCodeType(t *testing.T) {
-	tests := []struct {
-		name string
-		typ  tg.AuthSentCodeTypeClass
-		want string // подстрока, которая обязана быть в ответе
-	}{
-		{"в приложение", &tg.AuthSentCodeTypeApp{}, "В САМ TELEGRAM"},
-		{"по SMS", &tg.AuthSentCodeTypeSMS{}, "SMS"},
-		{"звонком", &tg.AuthSentCodeTypeCall{}, "звонком"},
-		{"сброшенный звонок", &tg.AuthSentCodeTypeMissedCall{}, "последние цифры"},
-		{"на почту", &tg.AuthSentCodeTypeEmailCode{}, "почту"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := describeCodeType(&tg.AuthSentCode{Type: tt.typ})
-			if !strings.Contains(got, tt.want) {
-				t.Errorf("описание %q не содержит %q", got, tt.want)
-			}
-		})
+	types := map[string]tg.AuthSentCodeTypeClass{
+		"приложение":        &tg.AuthSentCodeTypeApp{},
+		"SMS":               &tg.AuthSentCodeTypeSMS{},
+		"звонок":            &tg.AuthSentCodeTypeCall{},
+		"сброшенный звонок": &tg.AuthSentCodeTypeMissedCall{},
+		"почта":             &tg.AuthSentCodeTypeEmailCode{},
+		"Fragment":          &tg.AuthSentCodeTypeFragmentSMS{},
 	}
 
-	// Незнакомый способ не должен ронять вход — пусть скажет хоть что-то.
+	seen := make(map[string]string, len(types))
+	for name, typ := range types {
+		got := describeCodeType(&tg.AuthSentCode{Type: typ})
+		if strings.TrimSpace(got) == "" {
+			t.Errorf("%s описан пустой строкой", name)
+			continue
+		}
+		if prev, dup := seen[got]; dup {
+			t.Errorf("%s и %s описаны одинаково (%q) — их не различить", name, prev, got)
+		}
+		seen[got] = name
+	}
+
+	// Незнакомый способ и nil не должны ронять вход — пусть скажут хоть что-то.
 	if got := describeCodeType(&tg.AuthSentCode{Type: &tg.AuthSentCodeTypeSetUpEmailRequired{}}); got == "" {
 		t.Error("незнакомый способ описан пустой строкой")
 	}

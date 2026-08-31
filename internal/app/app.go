@@ -1,10 +1,8 @@
 // Package app связывает источник сообщений, разбор и публикацию отчёта.
 //
-// Пакет не знает ни про MTProto, ни про Google API: он работает через
-// интерфейсы Source и Sink, объявленные здесь же — на стороне потребителя,
-// как это принято в Go. Благодаря этому порядок шагов, поведение при уже
-// существующем отчёте и правила чистки проверяются обычными тестами
-// на фейках, без сети и учётных данных.
+// Про MTProto и Google API пакет не знает: он ходит через интерфейсы Source
+// и Sink, объявленные здесь же. Поэтому порядок шагов, дедуп и чистка
+// проверяются на фейках, без сети и учётных данных.
 package app
 
 import (
@@ -32,9 +30,8 @@ type Sink interface {
 	Trash(ctx context.Context, fileID string) error
 }
 
-// Options — то, что сервису нужно знать о настройках. Не *config.Config
-// целиком: пакету достаточно пяти значений, и от формы конфига он
-// зависеть не должен. Раскладывает их main — на то он и точка сборки.
+// Options — то, что сервису нужно из настроек. Не *config.Config целиком:
+// от формы конфига пакет зависеть не должен, раскладывает их main.
 type Options struct {
 	Labels        map[string]string // LABELS из сообщения -> тип бэкапа
 	Location      *time.Location    // зона, в которой считаются сутки
@@ -78,17 +75,15 @@ func (a *App) Once(ctx context.Context, day time.Time, dryRun bool) error {
 		return err
 	}
 
-	// Отчёт за день должен быть один. Проверка листингом дешевле,
-	// чем разбираться потом с двумя файлами на одну дату. Тот же список
-	// уходит в чистку — созданный сейчас файл в него не попадает,
-	// поэтому удалить сам себя запуск не может.
+	// Отчёт за день должен быть один. Тот же список уходит в чистку —
+	// созданный сейчас файл в него не попадает, так что удалить сам себя
+	// запуск не может.
 	if id, ok := findByName(files, name); ok {
 		a.log.Warn("отчёт за этот день уже есть, публикацию пропускаю", "file_id", id)
 	} else {
 		jobs := report.Aggregate(backups)
 		if len(jobs) == 0 {
-			// Отчёт без единой задачи — сам по себе тревожный сигнал:
-			// либо канал молчал, либо не отработал вообще никто.
+			// Либо канал молчал, либо не отработал вообще никто.
 			a.log.Warn("в отчёте нет ни одной задачи: за этот день в канале не нашлось сообщений о бэкапах")
 		}
 		a.warnAmbiguousNames(jobs)
@@ -157,44 +152,39 @@ func (a *App) parseAll(raws []parser.RawMessage) ([]parser.Backup, int) {
 // warnAnomalies сообщает о странностях, которые не мешают строке попасть
 // в отчёт, но человеку о них знать стоит.
 func (a *App) warnAnomalies(b parser.Backup, at time.Time) {
-	// ERROR без времён — норма: команда не запускалась. А вот SUCCESS
-	// без времён редкость: источник отчитался об успехе, не сказав, когда.
+	// ERROR без времён — норма: команда не запускалась. SUCCESS без времён —
+	// уже нет: источник отчитался об успехе, не сказав когда.
 	if b.Status == parser.StatusSuccess && !b.HasTimes() {
 		a.log.Warn("успешный бэкап без времён",
 			"env", b.Environment, "node", b.Node, "at", at.Format(time.RFC3339))
 	}
 	if b.Type == parser.TypeUnknown {
-		// Метку обязательно назвать: без неё предупреждение сообщает
-		// о проблеме, но не о том, что именно дописать в labels.
+		// Метку называем в логе: по ней строку и дописывают в labels.
 		a.log.Warn("метки нет в labels — задача попадёт в сводку как UNKNOWN",
 			"метка", b.Label, "env", b.Environment, "node", b.Node,
 			"at", at.Format(time.RFC3339))
 	}
 }
 
-// Цвета заливки: спокойные пастельные тона, чтобы лист читался, а не слепил.
+// Цвета заливки строк — пастельные, чтобы лист читался.
 var (
 	green = gsheets.RGB{R: 0.85, G: 0.94, B: 0.85}
 	red   = gsheets.RGB{R: 1, G: 0.85, B: 0.85}
 	grey  = gsheets.RGB{R: 0.94, G: 0.94, B: 0.94}
 )
 
-// sheetsOf собирает два листа отчёта.
-//
-// Первым идёт «Сводка» — он открывается по умолчанию и отвечает на вопрос,
-// ради которого отчёт заказан: всё ли прошло. «Детали» нужны, когда в сводке
-// что-то красное и надо понять, какая нода что сказала.
+// sheetsOf собирает листы отчёта. «Сводка» первой: она открывается
+// по умолчанию. В «Детали» идут, когда в сводке что-то красное.
 func sheetsOf(jobs []report.Job, backups []parser.Backup) []gsheets.Sheet {
 	return []gsheets.Sheet{
 		{
 			Title:     "Сводка",
 			Rows:      report.SummaryRows(jobs),
 			StatusCol: report.SummaryStatusCol,
-			// Явная ширина только у двух левых колонок: их значения длиннее
-			// заголовка ("PostgreSQL Cloud", "AMANAT PROD"), и автоподгонка
-			// ужимала бы их впритык. Остальные колонки короткие и ровные —
-			// им хватает подгонки по содержимому, поэтому ширины не заданы.
-			// Порядок: Environment, Backup, дальше автоматически.
+			// Явная ширина у двух левых колонок (Environment, Backup):
+			// их значения длиннее заголовка ("PostgreSQL Cloud",
+			// "AMANAT PROD"), автоподгонка ужимала бы их впритык.
+			// Остальным хватает подгонки по содержимому.
 			Widths: []int{130, 120},
 			Colors: []gsheets.ColorRule{
 				{Value: report.MarkOK, Color: green},
@@ -208,8 +198,8 @@ func sheetsOf(jobs []report.Job, backups []parser.Backup) []gsheets.Sheet {
 			Colors: []gsheets.ColorRule{
 				{Value: parser.StatusSuccess, Color: green},
 				{Value: parser.StatusFailed, Color: red},
-				// ERROR серым, а не красным: на кластере это «команда не
-				// выполнялась на этой ноде» — штатная работа, а не авария.
+				// ERROR серым: на кластере это «команда не выполнялась
+				// на этой ноде» — штатная работа, а не авария.
 				{Value: parser.StatusError, Color: grey},
 			},
 		},
@@ -217,8 +207,7 @@ func sheetsOf(jobs []report.Job, backups []parser.Backup) []gsheets.Sheet {
 }
 
 // warnAmbiguousNames ловит ошибку конфига: две метки в одном окружении
-// получили одинаковое имя. В сводке это две внешне неразличимые строки,
-// и человек не поймёт, какая из них какой бэкап.
+// получили одинаковое имя — в сводке это две неразличимые строки.
 func (a *App) warnAmbiguousNames(jobs []report.Job) {
 	type key struct{ env, name string }
 	seen := make(map[key]string, len(jobs))
@@ -254,7 +243,7 @@ func findByName(files []gsheets.File, name string) (string, bool) {
 }
 
 // cleanup убирает отчёты старше retention_days. Ошибку не возвращает:
-// неудачное удаление логируется и не должно обесценивать построенный отчёт.
+// неудачное удаление логируется и не должно ронять уже готовый отчёт.
 func (a *App) cleanup(ctx context.Context, files []gsheets.File, dryRun bool) {
 	cutoff := report.Cutoff(time.Now(), a.opts.RetentionDays, a.opts.Location)
 

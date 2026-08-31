@@ -11,6 +11,12 @@ import (
 // Фиксированная зона вместо time.LoadLocation: тест не зависит от tzdata на машине.
 var testLoc = time.FixedZone("+05", 5*60*60)
 
+// at — момент внутри тестовых суток. Дата и зона заданы здесь один раз:
+// раньше каждый тест заводил своё замыкание с тем же литералом.
+func at(hh, mm, ss int) time.Time {
+	return time.Date(2025, 12, 15, hh, mm, ss, 0, testLoc)
+}
+
 func TestHumanDuration(t *testing.T) {
 	tests := []struct {
 		name string
@@ -32,17 +38,14 @@ func TestHumanDuration(t *testing.T) {
 }
 
 func TestDetailRows(t *testing.T) {
-	d := func(hh, mm, ss int) time.Time {
-		return time.Date(2025, 12, 15, hh, mm, ss, 0, testLoc)
-	}
 	// Намеренно вперемешку; MinIO и MongoDB стартуют в одну секунду.
 	in := []parser.Backup{
 		{Environment: "KT", Node: "kt-mongo01", Type: "MongoDB", Status: "FAILED",
-			Start: d(1, 0, 1), End: d(1, 11, 26)},
+			Start: at(1, 0, 1), End: at(1, 11, 26)},
 		{Environment: "PROD KPO", Node: "", Type: "PostgreSQL", Status: "SUCCESS",
-			Start: d(3, 30, 19), End: d(3, 34, 57)},
+			Start: at(3, 30, 19), End: at(3, 34, 57)},
 		{Environment: "KT", Node: "kt-minio01", Type: "MinIO", Status: "SUCCESS",
-			Start: d(1, 0, 1), End: d(2, 23, 20)},
+			Start: at(1, 0, 1), End: at(2, 23, 20)},
 	}
 
 	want := [][]any{
@@ -72,7 +75,7 @@ func TestReportDateFromName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := reportDateFromName(tt.file)
+			got, ok := reportDateFromName(tt.file, testLoc)
 			if tt.want == "" {
 				if ok {
 					t.Fatalf("ожидал ok == false, получил дату %v", got)
@@ -112,16 +115,43 @@ func TestShouldDelete(t *testing.T) {
 	}
 }
 
+// Граница хранения не должна зависеть от знака смещения зоны. Пока дата
+// из имени разбиралась в UTC, а граница строилась в зоне конфига, отчёт
+// ровно retention_days возраста западнее UTC удалялся на сутки раньше.
+func TestShouldDeleteAcrossZones(t *testing.T) {
+	zones := []struct {
+		name   string
+		offset int // часы от UTC
+	}{
+		{"восточнее UTC", +5},
+		{"UTC", 0},
+		{"западнее UTC", -4},
+	}
+	for _, z := range zones {
+		t.Run(z.name, func(t *testing.T) {
+			loc := time.FixedZone(z.name, z.offset*60*60)
+			now := time.Date(2025, 12, 15, 11, 0, 0, 0, loc)
+			cutoff := Cutoff(now, 30, loc)
+
+			onEdge := ReportName(now.AddDate(0, 0, -30))
+			if ShouldDelete(onEdge, cutoff) {
+				t.Errorf("%s: отчёт ровно на границе хранения удалён, ожидал оставить", onEdge)
+			}
+			older := ReportName(now.AddDate(0, 0, -31))
+			if !ShouldDelete(older, cutoff) {
+				t.Errorf("%s: отчёт старше границы оставлен, ожидал удалить", older)
+			}
+		})
+	}
+}
+
 // Строка со статусом ERROR: времён нет, три последние колонки пустые,
 // и в сортировке она уходит в конец.
 func TestDetailRowsErrorWithoutTimes(t *testing.T) {
-	d := func(hh, mm, ss int) time.Time {
-		return time.Date(2025, 12, 15, hh, mm, ss, 0, testLoc)
-	}
 	in := []parser.Backup{
 		{Environment: "KT", Node: "kt-backup01", Type: "PostgreSQL", Status: parser.StatusError},
 		{Environment: "KT", Node: "kt-minio01", Type: "MinIO", Status: parser.StatusSuccess,
-			Start: d(1, 0, 1), End: d(2, 23, 20)},
+			Start: at(1, 0, 1), End: at(2, 23, 20)},
 	}
 
 	got := DetailRows(in)
@@ -158,10 +188,9 @@ func TestCutoff(t *testing.T) {
 
 // BuildRows не имеет права переупорядочивать срез вызывающей стороны.
 func TestDetailRowsDoesNotMutateInput(t *testing.T) {
-	d := func(hh int) time.Time { return time.Date(2025, 12, 15, hh, 0, 0, 0, testLoc) }
 	in := []parser.Backup{
-		{Node: "поздний", Status: parser.StatusSuccess, Start: d(5), End: d(6)},
-		{Node: "ранний", Status: parser.StatusSuccess, Start: d(1), End: d(2)},
+		{Node: "поздний", Status: parser.StatusSuccess, Start: at(5, 0, 0), End: at(6, 0, 0)},
+		{Node: "ранний", Status: parser.StatusSuccess, Start: at(1, 0, 0), End: at(2, 0, 0)},
 	}
 
 	DetailRows(in)
@@ -174,12 +203,11 @@ func TestDetailRowsDoesNotMutateInput(t *testing.T) {
 // Правило кластера: бэкап сделан хотя бы одной нодой — задача успешна,
 // а остальные «команда не выполнялась» отказом не считаются.
 func TestAggregateClusterSuccess(t *testing.T) {
-	d := func(hh, mm int) time.Time { return time.Date(2025, 12, 15, hh, mm, 0, 0, testLoc) }
 	in := []parser.Backup{
 		{Environment: "KT", Node: "kt-minio01", Label: "MINIO_BACKUPS", Type: "MinIO", Status: parser.StatusError},
 		{Environment: "KT", Node: "kt-minio02", Label: "MINIO_BACKUPS", Type: "MinIO", Status: parser.StatusError},
 		{Environment: "KT", Node: "kt-minio03", Label: "MINIO_BACKUPS", Type: "MinIO",
-			Status: parser.StatusSuccess, Start: d(1, 0), End: d(2, 23)},
+			Status: parser.StatusSuccess, Start: at(1, 0, 0), End: at(2, 23, 0)},
 	}
 
 	jobs := Aggregate(in)
@@ -197,7 +225,7 @@ func TestAggregateClusterSuccess(t *testing.T) {
 	if !reflect.DeepEqual(j.Nodes, []string{"kt-minio01", "kt-minio02", "kt-minio03"}) {
 		t.Errorf("Nodes = %v, ожидал все три ноды по алфавиту", j.Nodes)
 	}
-	if !j.Start.Equal(d(1, 0)) || !j.End.Equal(d(2, 23)) {
+	if !j.Start.Equal(at(1, 0, 0)) || !j.End.Equal(at(2, 23, 0)) {
 		t.Errorf("времена %v–%v, ожидал времена успешной ноды", j.Start, j.End)
 	}
 }
@@ -205,10 +233,9 @@ func TestAggregateClusterSuccess(t *testing.T) {
 // Ключ — LABELS, а не тип: иначе провал одного MinIO-бэкапа спрятался бы
 // за успехом другого.
 func TestAggregateKeepsLabelsApart(t *testing.T) {
-	d := func(hh int) time.Time { return time.Date(2025, 12, 15, hh, 0, 0, 0, testLoc) }
 	in := []parser.Backup{
 		{Environment: "KT", Node: "kt-minio01", Label: "MINIO_BACKUPS", Type: "MinIO",
-			Status: parser.StatusSuccess, Start: d(1), End: d(2)},
+			Status: parser.StatusSuccess, Start: at(1, 0, 0), End: at(2, 0, 0)},
 		{Environment: "KT", Node: "kt-minio01", Label: "MINIO_BACKUPS_AI_BUCKET", Type: "MinIO AI",
 			Status: parser.StatusError},
 	}
@@ -268,9 +295,8 @@ func TestAggregateOrderIsStable(t *testing.T) {
 }
 
 func TestSummaryRows(t *testing.T) {
-	d := func(hh, mm int) time.Time { return time.Date(2025, 12, 15, hh, mm, 0, 0, testLoc) }
 	jobs := []Job{
-		{Environment: "KT", Name: "MinIO", OK: true, Start: d(1, 0), End: d(2, 23), Node: "kt-minio03"},
+		{Environment: "KT", Name: "MinIO", OK: true, Start: at(1, 0, 0), End: at(2, 23, 0), Node: "kt-minio03"},
 		{Environment: "KT", Name: "PostgreSQL Cloud", OK: false},
 	}
 
@@ -327,11 +353,10 @@ func TestSummaryShowsNodesOnFailure(t *testing.T) {
 // У успеха колонка остаётся про ту ноду, что реально отработала,
 // а не про весь кластер.
 func TestSummaryShowsWinningNodeOnSuccess(t *testing.T) {
-	d := func(h int) time.Time { return time.Date(2025, 12, 15, h, 0, 0, 0, testLoc) }
 	in := []parser.Backup{
 		{Environment: "KT", Node: "kt-minio01", Label: "MINIO_BACKUPS", Type: "MinIO", Status: parser.StatusError},
 		{Environment: "KT", Node: "kt-minio03", Label: "MINIO_BACKUPS", Type: "MinIO",
-			Status: parser.StatusSuccess, Start: d(1), End: d(2)},
+			Status: parser.StatusSuccess, Start: at(1, 0, 0), End: at(2, 0, 0)},
 	}
 
 	rows := SummaryRows(Aggregate(in))
@@ -354,13 +379,12 @@ func TestSummaryNoNodeAtAll(t *testing.T) {
 // Провалы идут первыми: первая строка отчёта сама отвечает на вопрос
 // «всё ли прошло», читать остальное не требуется.
 func TestAggregatePutsFailuresFirst(t *testing.T) {
-	d := func(h int) time.Time { return time.Date(2025, 12, 15, h, 0, 0, 0, testLoc) }
 	in := []parser.Backup{
 		{Environment: "AMANAT PROD", Label: "MINIO_BACKUPS", Type: "MinIO",
-			Status: parser.StatusSuccess, Start: d(1), End: d(2)},
+			Status: parser.StatusSuccess, Start: at(1, 0, 0), End: at(2, 0, 0)},
 		{Environment: "KT", Label: "PGBACKREST_BACKUP", Type: "PostgreSQL", Status: parser.StatusError},
 		{Environment: "KT", Label: "MINIO_BACKUPS", Type: "MinIO",
-			Status: parser.StatusSuccess, Start: d(1), End: d(2)},
+			Status: parser.StatusSuccess, Start: at(1, 0, 0), End: at(2, 0, 0)},
 		{Environment: "AMANAT PROD", Label: "MONGODB_BACKUP", Type: "MongoDB", Status: parser.StatusFailed},
 	}
 
@@ -382,9 +406,8 @@ func TestAggregatePutsFailuresFirst(t *testing.T) {
 // В сводке дата не пишется — она одна на файл и стоит в его имени.
 // На деталях, наоборот, остаётся: так требует ТЗ.
 func TestTimeLayoutDiffersBetweenSheets(t *testing.T) {
-	d := func(h int) time.Time { return time.Date(2025, 12, 15, h, 0, 0, 0, testLoc) }
 	in := []parser.Backup{{Environment: "KT", Node: "n", Label: "MINIO_BACKUPS", Type: "MinIO",
-		Status: parser.StatusSuccess, Start: d(1), End: d(2)}}
+		Status: parser.StatusSuccess, Start: at(1, 0, 0), End: at(2, 0, 0)}}
 
 	if got := SummaryRows(Aggregate(in))[1][3]; got != "01:00:00" {
 		t.Errorf("сводка: Start = %v, ожидал 01:00:00 без даты", got)
