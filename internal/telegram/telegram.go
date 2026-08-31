@@ -152,8 +152,8 @@ func describeCodeType(sent *tg.AuthSentCode) string {
 	}
 	switch sent.Type.(type) {
 	case *tg.AuthSentCodeTypeApp:
-		return "СООБЩЕНИЕМ В САМ TELEGRAM (служебный чат «Telegram»), не по SMS —\n" +
-			"  так бывает, когда на номере уже есть активная сессия"
+		return "Сообщение было отправлено ваш телеграмм чат. Проверьте его на наличие кода —\n" +
+			"  Если код не пришел, то значит у вас активная сессия"
 	case *tg.AuthSentCodeTypeSMS, *tg.AuthSentCodeTypeFirebaseSMS:
 		return "по SMS"
 	case *tg.AuthSentCodeTypeFragmentSMS:
