@@ -46,6 +46,16 @@ labels:
   MINIO_BACKUPS: MinIO
   MINIO_BACKUPS_AI_BUCKET: MinIO AI
   MINIO_VK_CLOUD_BACKUP: MinIO VK Cloud
+  # Возможно, второе написание MINIO_VK_CLOUD_BACKUP: ALERT у этой метки —
+  # "VK CLOUD BACKUP command was not executed". Пока имя отдельное: свести
+  # к "MinIO VK Cloud", когда подтвердится, что задача одна.
+  MINIO_CLOUD_BACKUP: MinIO Cloud
 
   # etcd. Метка приходит с пробелами, а не подчёркиваниями — отсюда кавычки.
   "TELEPORT ETCD BACKUP": Teleport etcd
+
+  # Baiterek. Отчитывается SUCCESS без BACKUP START/FINISHED TIME, поэтому
+  # время и длительность в сводке пустые, а сервис пишет WARN «успешный
+  # бэкап без времён». Убрать метку отсюда нельзя — строка всё равно
+  # попадёт в отчёт, только под именем UNKNOWN.
+  "BAITEREK COPY TO SECOND VM": Baiterek copy to VM2
