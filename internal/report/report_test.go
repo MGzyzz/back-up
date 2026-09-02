@@ -2,6 +2,7 @@ package report
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -414,5 +415,42 @@ func TestTimeLayoutDiffersBetweenSheets(t *testing.T) {
 	}
 	if got := DetailRows(in)[1][4]; got != "2025-12-15 01:00:00" {
 		t.Errorf("детали: Start = %v, ожидал полную дату", got)
+	}
+}
+
+// Метку, которой нет в labels, человек должен увидеть в самом отчёте:
+// «UNKNOWN» без неё не говорит, какой бэкап не прошёл, а две незнакомые
+// метки в одном окружении дали бы две неразличимые строки.
+func TestUnknownLabelStaysVisible(t *testing.T) {
+	bs := []parser.Backup{
+		{Environment: "PROD", Label: "NEW_BACKUP", Type: parser.TypeUnknown,
+			Status: parser.StatusSuccess, Start: at(1, 0, 0), End: at(1, 30, 0)},
+		{Environment: "PROD", Label: "OTHER_BACKUP", Type: parser.TypeUnknown,
+			Status: parser.StatusFailed},
+	}
+
+	jobs := Aggregate(bs)
+	if len(jobs) != 2 {
+		t.Fatalf("задач %d, ожидал 2", len(jobs))
+	}
+	for _, j := range jobs {
+		if !strings.Contains(j.Name, j.Label) {
+			t.Errorf("имя %q не называет метку %q", j.Name, j.Label)
+		}
+		if !strings.Contains(j.Name, parser.TypeUnknown) {
+			t.Errorf("имя %q потеряло UNKNOWN — по нему фильтруют", j.Name)
+		}
+	}
+
+	// В деталях та же метка: колонка типа — единственное место, где её видно.
+	rows := DetailRows(bs)
+	if got := rows[1][2]; !strings.Contains(got.(string), "NEW_BACKUP") {
+		t.Errorf("детали: тип %q не называет метку", got)
+	}
+
+	// Известный тип остаётся как был — метку к нему не приписываем.
+	known := Aggregate([]parser.Backup{{Environment: "PROD", Label: "MINIO_BACKUPS", Type: "MinIO"}})
+	if known[0].Name != "MinIO" {
+		t.Errorf("имя известного типа = %q, ожидал MinIO", known[0].Name)
 	}
 }

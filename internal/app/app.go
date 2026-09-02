@@ -72,7 +72,7 @@ func (a *App) Once(ctx context.Context, day time.Time, dryRun bool) error {
 
 	files, err := a.sink.List(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("прочитать папку отчётов: %w", err)
 	}
 
 	// Отчёт за день должен быть один. Тот же список уходит в чистку —

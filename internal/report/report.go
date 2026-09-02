@@ -54,6 +54,19 @@ func humanDuration(d time.Duration) string {
 	return fmt.Sprintf("%dh %02dm", int(d.Hours()), int(d.Minutes())%60)
 }
 
+// displayName — как задача называется в отчёте.
+//
+// У метки, которой нет в labels, тип один на всех — UNKNOWN. Саму метку
+// сервис пишет в лог, но в файл она не попадала: открывший отчёт видел
+// «UNKNOWN» и не мог понять, какой бэкап не прошёл, а несколько незнакомых
+// меток в одном окружении давали неразличимые строки.
+func displayName(b parser.Backup) string {
+	if b.Type == parser.TypeUnknown && b.Label != "" {
+		return b.Type + " (" + b.Label + ")"
+	}
+	return b.Type
+}
+
 // Job — итог одной задачи бэкапа за сутки, сведённый по всем нодам.
 type Job struct {
 	Environment string
@@ -89,7 +102,7 @@ func Aggregate(bs []parser.Backup) []Job {
 		k := key{b.Environment, b.Label}
 		j, seen := index[k]
 		if !seen {
-			j = &Job{Environment: b.Environment, Label: b.Label, Name: b.Type}
+			j = &Job{Environment: b.Environment, Label: b.Label, Name: displayName(b)}
 			index[k] = j
 			order = append(order, k)
 		}
@@ -184,7 +197,7 @@ func DetailRows(bs []parser.Backup) [][]any {
 	for _, b := range sorted {
 		start, end, dur := timeCells(b.Start, b.End, b.HasTimes(), detailTimeLayout)
 		rows = append(rows, []any{
-			b.Environment, cmp.Or(b.Node, noValue), b.Type, b.Status, start, end, dur,
+			b.Environment, cmp.Or(b.Node, noValue), displayName(b), b.Status, start, end, dur,
 		})
 	}
 	return rows

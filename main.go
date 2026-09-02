@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -48,6 +49,18 @@ func parseFlags() options {
 	return o
 }
 
+// validate ловит флаги, которые вместе не работают: молча проигнорированный
+// флаг хуже отказа — человек уверен, что отчёт построен за указанный день.
+func (o options) validate() error {
+	if o.login && o.channels {
+		return errors.New("-login и -channels вместе не работают: выбери один")
+	}
+	if o.daemon && o.date != "" {
+		return errors.New("-date не действует с -daemon: демон строит отчёт за наступивший день")
+	}
+	return nil
+}
+
 func main() {
 	opts := parseFlags()
 
@@ -67,6 +80,10 @@ func main() {
 
 // run выбирает режим работы и собирает зависимости.
 func run(ctx context.Context, opts options) error {
+	if err := opts.validate(); err != nil {
+		return err
+	}
+
 	cfg, err := config.LoadConfig(opts.configPath)
 	if err != nil {
 		return err

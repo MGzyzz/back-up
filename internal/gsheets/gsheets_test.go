@@ -126,3 +126,30 @@ func TestColumnWidthsAllAuto(t *testing.T) {
 		t.Errorf("диапазон [%d:%d], ожидал [0:7]", d.StartIndex, d.EndIndex)
 	}
 }
+
+// День без бэкапов даёт лист из одного заголовка. Пустой диапазон [1,1)
+// Sheets отвергает, и вместе с правилом заливки отвалился бы весь батч
+// оформления: ни жирной шапки, ни фильтра, ни ширин.
+func TestSheetFormatSkipsColorsWithoutDataRows(t *testing.T) {
+	tab := Sheet{
+		Title:     "Сводка",
+		Rows:      [][]any{{"a", "b", "Status"}},
+		StatusCol: 2,
+		Colors:    []ColorRule{{Value: "OK", Color: RGB{G: 1}}},
+	}
+
+	var colors, other int
+	for _, r := range sheetFormat(7, tab) {
+		if r.AddConditionalFormatRule != nil {
+			colors++
+			continue
+		}
+		other++
+	}
+	if colors != 0 {
+		t.Errorf("правил заливки %d, ожидал 0: строк данных нет", colors)
+	}
+	if other == 0 {
+		t.Error("остальное оформление тоже пропало — шапка и фильтр нужны и пустому листу")
+	}
+}

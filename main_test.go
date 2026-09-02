@@ -70,3 +70,31 @@ func TestReportDayUsesConfiguredZone(t *testing.T) {
 		t.Errorf("31 августа по Алматы — сегодня, а не будущее: %v", err)
 	}
 }
+
+// Флаг, который ничего не делает, опаснее отказа: человек уверен, что
+// отчёт построен за указанный день, а демон построил его за сегодня.
+func TestOptionsValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		opts    options
+		errWant string
+	}{
+		{"обычный запуск", options{date: "2026-08-28"}, ""},
+		{"демон без даты", options{daemon: true}, ""},
+		{"дата вместе с демоном", options{daemon: true, date: "2026-08-28"}, "-date"},
+		{"два интерактивных режима", options{login: true, channels: true}, "-login"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.opts.validate()
+			switch {
+			case tt.errWant == "" && err != nil:
+				t.Fatalf("validate() = %v, ожидал nil", err)
+			case tt.errWant != "" && err == nil:
+				t.Fatalf("validate() = nil, ожидал ошибку про %s", tt.errWant)
+			case tt.errWant != "" && !strings.Contains(err.Error(), tt.errWant):
+				t.Errorf("ошибка %q не называет %s", err, tt.errWant)
+			}
+		})
+	}
+}

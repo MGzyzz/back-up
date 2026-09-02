@@ -68,11 +68,23 @@ func Login(ctx context.Context, clientSecretPath, tokenPath string) error {
 	// Ошибка Serve здесь всегда ErrServerClosed из defer ниже: значимый отказ
 	// вылезет таймаутом ожидания кода.
 	go func() { _ = srv.Serve(ln) }()
-	defer srv.Close()
+	// Shutdown, а не Close: обработчик уже отдал «Готово», и обрывать
+	// соединение до того, как страница долистает ответ, незачем.
+	defer func() {
+		done, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(done)
+	}()
+
+	// PKCE: код, перехваченный на loopback другим локальным процессом,
+	// без verifier'а на токен не меняется. Google требует его от новых
+	// клиентов и рекомендует всем установленным приложениям.
+	verifier := oauth2.GenerateVerifier()
 
 	// AccessTypeOffline + ApprovalForce гарантируют выдачу refresh-токена:
 	// без него сервис не сможет работать без браузера.
-	url := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
+	url := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce,
+		oauth2.S256ChallengeOption(verifier))
 	fmt.Println("\nОткрой в браузере:\n\n" + url)
 	fmt.Println("\n(приложение не проверено — «Дополнительные настройки» → «Перейти»)")
 
@@ -85,7 +97,7 @@ func Login(ctx context.Context, clientSecretPath, tokenPath string) error {
 		return errors.New("не дождался подтверждения в браузере")
 	}
 
-	tok, err := cfg.Exchange(ctx, code)
+	tok, err := cfg.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return fmt.Errorf("обменять код на токен: %w", err)
 	}

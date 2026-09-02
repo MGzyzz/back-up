@@ -213,8 +213,7 @@ func escapeFormulas(rows [][]any) [][]any {
 	for i, row := range rows {
 		cells := make([]any, len(row))
 		for j, cell := range row {
-			s, ok := cell.(string)
-			if ok && strings.ContainsAny(first(s), "=+-@") {
+			if s, ok := cell.(string); ok && looksLikeFormula(s) {
 				cell = "'" + s
 			}
 			cells[j] = cell
@@ -224,12 +223,10 @@ func escapeFormulas(rows [][]any) [][]any {
 	return out
 }
 
-// first возвращает первый символ строки или пустую строку.
-func first(s string) string {
-	if s == "" {
-		return ""
-	}
-	return s[:1]
+// looksLikeFormula — начинается ли ячейка с символа, после которого Sheets
+// читает содержимое как формулу.
+func looksLikeFormula(s string) bool {
+	return s != "" && strings.IndexByte("=+-@", s[0]) >= 0
 }
 
 // format оформляет каждый лист: жирный заголовок, закреплённая первая строка,
@@ -290,6 +287,14 @@ func sheetFormat(sheetID int64, t Sheet) []*sheets.Request {
 		}},
 	}
 	reqs = append(reqs, columnWidths(sheetID, colCount, t.Widths)...)
+
+	// Заливать нечего, если в листе только заголовок: dataRange тогда пуст
+	// ([1,1)), а пустой диапазон Sheets отвергает — вместе с ним отвалился бы
+	// весь батч оформления, и день без бэкапов остался бы ещё и без шапки,
+	// фильтра и ширин.
+	if rowCount <= 1 {
+		return reqs
+	}
 
 	// Правила заливки перечислены явно, а не выведены из «не успех»:
 	// на кластере ERROR — штатная работа, и красным быть не должен.

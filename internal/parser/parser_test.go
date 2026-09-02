@@ -304,3 +304,23 @@ func TestTwoDigitYear(t *testing.T) {
 		t.Errorf("год = %d, ожидал 2026", got.Year())
 	}
 }
+
+// NODE приходит из того же чужого канала, что и остальные поля, и мусор
+// в нём встречается тот же. Нечищеная нода стала бы отдельным элементом
+// Job.Nodes и разъехалась в отчёте со своей же строкой без мусора.
+func TestParseTrimsNode(t *testing.T) {
+	msg := RawMessage{Text: "ENVIRONMENT: PROD\n" +
+		"NODE: ❗️kt-minio01❗️\n" +
+		"LABELS: MINIO_BACKUPS\n" +
+		"STATUS: ✅ SUCCESS\n" +
+		"BACKUP START TIME: 28-08-26_01:00:00\n" +
+		"BACKUP FINISHED TIME: 28-08-26_01:30:00\n"}
+
+	b, err := Parse(msg, testLabels, testLoc)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if b.Node != "kt-minio01" {
+		t.Errorf("Node = %q, ожидал %q", b.Node, "kt-minio01")
+	}
+}
