@@ -18,6 +18,8 @@ import (
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/telegram/query"
+	"github.com/gotd/td/telegram/query/dialogs"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
@@ -29,8 +31,15 @@ import (
 // Под cron спрашивать код в stdin некому, поэтому это ошибка, а не приглашение ко входу.
 var ErrNoSession = errors.New("нет сессии Telegram: запусти с флагом -login")
 
-// pageSize — сколько сообщений просить за один запрос истории.
-const pageSize = 100
+const (
+	// pageSize — сколько сообщений просить за один запрос истории.
+	pageSize = 100
+	// dialogPageSize — сколько диалогов просить за один запрос списка.
+	dialogPageSize = 100
+)
+
+// errStopDialogs останавливает обход диалогов, когда нужное уже найдено.
+var errStopDialogs = errors.New("обход диалогов остановлен")
 
 // Config — всё, что нужно клиенту для работы.
 type Config struct {
@@ -122,6 +131,10 @@ func (c *Client) Login(ctx context.Context) error {
 			return err // сеть или протокол
 		}
 
+		// Ридер один на весь вход: Telegram может спросить код повторно,
+		// а новый bufio.Reader на каждый запрос уносил бы с собой всё, что
+		// человек успел набрать в буфер, вместе с выброшенным ридером.
+		stdin := bufio.NewReader(os.Stdin)
 		code := auth.CodeAuthenticatorFunc(func(_ context.Context, sent *tg.AuthSentCode) (string, error) {
 			// Способ доставки выбирает Telegram, а не мы: если на номере уже
 			// есть активная сессия, код уходит в само приложение.
@@ -130,7 +143,7 @@ func (c *Client) Login(ctx context.Context) error {
 				fmt.Println(hint)
 			}
 			fmt.Print("код: ")
-			line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+			line, err := stdin.ReadString('\n')
 			return strings.TrimSpace(line), err
 		})
 		flow := auth.NewFlow(
@@ -242,38 +255,54 @@ type Channel struct {
 func (c *Client) ListChannels(ctx context.Context) ([]Channel, error) {
 	var out []Channel
 	err := c.runAuthed(ctx, func(ctx context.Context, tgc *telegram.Client) error {
-		chats, err := dialogChats(ctx, tgc.API())
-		if err != nil {
-			return err
-		}
-		for _, chat := range chats {
-			if ch, ok := chat.(*tg.Channel); ok && !ch.Megagroup {
+		return eachChannel(ctx, tgc.API(), func(ch *tg.Channel) bool {
+			if !ch.Megagroup {
 				out = append(out, Channel{ID: ch.ID, Title: ch.Title})
 			}
-		}
-		return nil
+			return false
+		})
 	})
 	return out, err
 }
 
-// dialogChats снимает список чатов аккаунта — общий шаг для поиска канала
-// по ID и для показа списка на настройке.
-func dialogChats(ctx context.Context, api *tg.Client) ([]tg.ChatClass, error) {
-	res, err := api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
-		OffsetPeer: &tg.InputPeerEmpty{},
-		Limit:      200,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("получить список диалогов: %w", err)
+// eachChannel обходит каналы аккаунта и зовёт fn на каждом; fn возвращает
+// true, когда обход пора прекратить.
+//
+// Обход постраничный и по обеим папкам. Один запрос со срезом в 200 диалогов
+// тут не годится: канал уведомлений обычно заглушен, легко уезжает в архив
+// (это отдельная папка, в основном списке его тогда нет) и вытесняется вниз
+// живой перепиской. Любого из этих случаев хватило бы, чтобы ежедневный
+// отчёт перестал строиться с «канал не найден».
+func eachChannel(ctx context.Context, api *tg.Client, fn func(ch *tg.Channel) bool) error {
+	// 0 — основной список диалогов, 1 — архив.
+	for _, folder := range []int{0, 1} {
+		err := query.GetDialogs(api).
+			BatchSize(dialogPageSize).
+			FolderID(folder).
+			ForEach(ctx, func(_ context.Context, e dialogs.Elem) error {
+				p, ok := e.Peer.(*tg.InputPeerChannel)
+				if !ok {
+					return nil
+				}
+				// Канал берём из сущностей ответа: там же лежит access_hash,
+				// без которого к каналу не обратиться.
+				ch, ok := e.Entities.Channels()[p.ChannelID]
+				if !ok {
+					return nil
+				}
+				if fn(ch) {
+					return errStopDialogs
+				}
+				return nil
+			})
+		switch {
+		case errors.Is(err, errStopDialogs):
+			return nil
+		case err != nil:
+			return fmt.Errorf("получить список диалогов (папка %d): %w", folder, err)
+		}
 	}
-	switch d := res.(type) {
-	case *tg.MessagesDialogs:
-		return d.Chats, nil
-	case *tg.MessagesDialogsSlice:
-		return d.Chats, nil
-	default:
-		return nil, fmt.Errorf("неожиданный ответ на getDialogs: %T", res)
-	}
+	return nil
 }
 
 // resolvePeer ищет канал среди диалогов аккаунта.
@@ -282,19 +311,21 @@ func dialogChats(ctx context.Context, api *tg.Client) ([]tg.ChatClass, error) {
 // нет и быть не может: он свой у каждого аккаунта. Список диалогов — способ
 // его получить, работающий и для приватного канала без username.
 func (c *Client) resolvePeer(ctx context.Context, api *tg.Client) (tg.InputPeerClass, error) {
-	chats, err := dialogChats(ctx, api)
+	var peer tg.InputPeerClass
+	err := eachChannel(ctx, api, func(ch *tg.Channel) bool {
+		if ch.ID != c.channelID {
+			return false
+		}
+		peer = &tg.InputPeerChannel{ChannelID: ch.ID, AccessHash: ch.AccessHash}
+		return true
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	for _, chat := range chats {
-		ch, ok := chat.(*tg.Channel)
-		if !ok || ch.ID != c.channelID {
-			continue
-		}
-		return &tg.InputPeerChannel{ChannelID: ch.ID, AccessHash: ch.AccessHash}, nil
+	if peer == nil {
+		return nil, fmt.Errorf("канал %d не найден среди диалогов аккаунта", c.channelID)
 	}
-	return nil, fmt.Errorf("канал %d не найден среди диалогов аккаунта", c.channelID)
+	return peer, nil
 }
 
 // fetchRange листает историю назад от to, пока не дойдёт до from.
@@ -302,6 +333,10 @@ func (c *Client) resolvePeer(ctx context.Context, api *tg.Client) (tg.InputPeerC
 // История отдаётся страницами по убыванию даты, поэтому идём от конца суток
 // к началу и останавливаемся, как только сообщения стали старше from.
 func fetchRange(ctx context.Context, api *tg.Client, peer tg.InputPeerClass, from, to time.Time) ([]parser.RawMessage, error) {
+	// Зона границ — зона из конфига: в ней же должно быть время сообщения,
+	// иначе предупреждения в логе указывают на час, которого нет в отчёте.
+	loc := from.Location()
+
 	var out []parser.RawMessage
 	offsetID := 0
 
@@ -340,7 +375,7 @@ func fetchRange(ctx context.Context, api *tg.Client, peer tg.InputPeerClass, fro
 			if !ok {
 				continue // служебное сообщение
 			}
-			at := time.Unix(int64(msg.Date), 0)
+			at := time.Unix(int64(msg.Date), 0).In(loc)
 			if at.Before(from) {
 				return out, nil // ушли за начало суток
 			}

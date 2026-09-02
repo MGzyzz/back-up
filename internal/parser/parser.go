@@ -135,11 +135,13 @@ func Parse(m RawMessage, labels map[string]string, loc *time.Location) (Backup, 
 	// разошлось бы с ней молча.
 	return Backup{
 		Environment: trimNoise(fields["ENVIRONMENT"]),
-		Node:        fields["NODE"],
-		Label:       label,
-		Type:        typ,
-		Status:      status,
-		Start:       start,
-		End:         end,
+		// NODE чистим наравне с остальными: пришедшая как "kt-minio01❗️"
+		// нода иначе разъедется в отчёте со своей же строкой без мусора.
+		Node:   trimNoise(fields["NODE"]),
+		Label:  label,
+		Type:   typ,
+		Status: status,
+		Start:  start,
+		End:    end,
 	}, nil
 }
