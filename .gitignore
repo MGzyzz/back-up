@@ -1,15 +1,26 @@
+.DS_Store
+
 # секреты и данные — в репозиторий не попадают
-config.yaml
-env.sh
-data/
-secrets/
+back_end/config.yaml
+back_end/env.sh
+back_end/.env
+back_end/data/
+back_end/secrets/
 *.session
 *.db
 *.db-wal
 *.db-shm
 
-# токены и клиентские файлы OAuth; фикстуры тестов лежат в *.txt
-*.json
+# токены и клиентские файлы OAuth; фикстуры тестов лежат в *.txt.
+# Правило сужено до back_end: дословное `*.json` из старого файла
+# накрыло бы package.json и tsconfig.json будущего фронта.
+back_end/**/*.json
 
-# скомпилированный бинарник
+# скомпилированные бинари
 /backup-report
+back_end/backup-report
+back_end/server
+back_end/report
+
+front_end/node_modules/
+front_end/dist/
