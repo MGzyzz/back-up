@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gotd/td/tgerr"
 
 	"backup-report/internal/parser"
 	"backup-report/internal/telegram"
@@ -163,6 +164,34 @@ func TestПротухшаяСессияЭто503(t *testing.T) {
 	json.NewDecoder(res.Body).Decode(&e)
 	if !strings.Contains(e.Error, "login") {
 		t.Errorf("в ошибке нет подсказки про -login: %q", e.Error)
+	}
+}
+
+func TestFloodWaitЭто503СЗаголовкомRetryAfter(t *testing.T) {
+	// Telegram отвечает FLOOD_WAIT_42, когда запросов было слишком много.
+	srv := newTestServer(t, fakeSource{err: tgerr.New(420, "FLOOD_WAIT_42")})
+	defer srv.Close()
+
+	res, err := http.Get(srv.URL + "/api/report?date=2026-09-04")
+	if err != nil {
+		t.Fatalf("запрос: %v", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("код %d, ожидался 503", res.StatusCode)
+	}
+	// Без заголовка клиент не знает, когда повторять, и будет долбить сервер.
+	if got := res.Header.Get("Retry-After"); got != "43" {
+		t.Errorf("Retry-After = %q, ожидалось \"43\": 42 секунды из ошибки плюс секунда запаса", got)
+	}
+
+	var e ErrorDTO
+	if err := json.NewDecoder(res.Body).Decode(&e); err != nil {
+		t.Fatalf("разбор ответа: %v", err)
+	}
+	if !strings.Contains(e.Error, "42") {
+		t.Errorf("в тексте ошибки нет времени ожидания: %q", e.Error)
 	}
 }
 
