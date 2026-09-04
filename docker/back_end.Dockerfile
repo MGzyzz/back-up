@@ -20,6 +20,10 @@ RUN apk add --no-cache ca-certificates tzdata && \
 # пути из конфига (data/session.json) одинаково работают на хосте
 # и в контейнере, и второй конфиг не нужен.
 WORKDIR /app
+# Каталог под сессию/токены создаём и отдаём app заранее: это закрывает случай
+# именованного тома (Docker создаст его от root). Для бинд-монта (как в
+# compose) это не поможет — там права диктует хост, см. README.
+RUN mkdir -p /app/data && chown app:app /app/data
 COPY --from=build /out/server /out/report /app/
 USER app
 EXPOSE 8080

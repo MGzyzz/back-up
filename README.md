@@ -242,6 +242,20 @@ docker compose up -d
 
 Дашборд — на http://localhost:8080
 
+**Linux:** каталог `back_end/data` монтируется в контейнер с хоста, и права на
+нём диктует хост, а не образ (бинд-монт их не меняет). Контейнер работает под
+непривилегированным UID 10001, поэтому без этого он не сможет записать
+`session.json`:
+
+```sh
+# Linux: каталог data монтируется с хоста, и права на нём диктует хост.
+# Без этого контейнер не запишет session.json.
+mkdir -p back_end/data && sudo chown -R 10001:10001 back_end/data
+```
+
+На macOS через Docker Desktop это не нужно — там файловая система
+проксируется, и права транслируются автоматически.
+
 ### Вход в Telegram
 
 Сессия нужна одна и на сервер, и на отчёты. Если `data/session.json` ещё нет
@@ -258,7 +272,7 @@ docker compose run --rm -it back_end /app/report -login
 ### Разработка без Docker
 
 ```sh
-cd back_end && ./env.sh && go run ./cmd/server   # бэк на :8080
+cd back_end && source ./env.sh && go run ./cmd/server   # бэк на :8080
 cd front_end && npm run dev                       # фронт на :5173
 ```
 

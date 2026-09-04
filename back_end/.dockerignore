@@ -1,0 +1,14 @@
+# Секреты и состояние — в образ не попадают даже на этапе сборки:
+# слои build-стейджа остаются в кэше демона.
+data/
+secrets/
+.env
+env.sh
+config.yaml
+
+# Собранные бинари и мусор
+backup-report
+server
+report
+*.session
+.git
