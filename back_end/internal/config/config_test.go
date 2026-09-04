@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const goodYAML = `
@@ -91,6 +92,7 @@ func TestSecretsAreNeverReadFromYAML(t *testing.T) {
 }
 
 // Главный тест файла: пропущенные поля превращаются в нули, и Validate обязан их поймать.
+// Google сюда не входит: его проверяет RequireGoogle, см. TestRequireGoogleНазываетВсеПропуски.
 func TestValidateCatchesZeroValues(t *testing.T) {
 	setSecrets(t)
 
@@ -103,9 +105,6 @@ func TestValidateCatchesZeroValues(t *testing.T) {
 	for _, want := range []string{
 		"telegram.channel_id",
 		"telegram.session_path",
-		"google.folder_id",
-		"google.token_path",
-		"google.retention_days",
 		"labels",
 		"schedule.timezone",
 	} {
@@ -115,6 +114,8 @@ func TestValidateCatchesZeroValues(t *testing.T) {
 	}
 }
 
+// GOOGLE_OAUTH_CLIENT сюда не входит: его проверяет RequireGoogle,
+// см. TestRequireGoogleНазываетВсеПропуски.
 func TestValidateRequiresSecretsFromEnv(t *testing.T) {
 	t.Setenv("TELEGRAM_API_ID", "")
 	t.Setenv("TELEGRAM_API_HASH", "")
@@ -126,7 +127,7 @@ func TestValidateRequiresSecretsFromEnv(t *testing.T) {
 		t.Fatal("LoadConfig вернул nil при пустых секретах")
 	}
 	for _, want := range []string{
-		"TELEGRAM_API_ID", "TELEGRAM_API_HASH", "TELEGRAM_PHONE", "GOOGLE_OAUTH_CLIENT",
+		"TELEGRAM_API_ID", "TELEGRAM_API_HASH", "TELEGRAM_PHONE",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("в тексте ошибки нет %q; получено:\n%s", want, err.Error())
@@ -153,5 +154,114 @@ func TestValidateRejectsBadTimezone(t *testing.T) {
 	bad := strings.Replace(goodYAML, "Asia/Almaty", "Mars/Olympus", 1)
 	if _, err := LoadConfig(writeConfig(t, bad)); err == nil {
 		t.Fatal("LoadConfig принял несуществующую таймзону")
+	}
+}
+
+// noGoogleYAML — конфиг без блока google. Ровно то, с чем стартует cmd/server.
+const noGoogleYAML = `
+telegram:
+  channel_id: -1001234567890
+  session_path: ./data/session.json
+schedule:
+  report_at: "11:00"
+  timezone: Asia/Almaty
+labels:
+  MINIO_BACKUPS: MinIO
+`
+
+const serverYAML = `
+telegram:
+  channel_id: -1001234567890
+  session_path: ./data/session.json
+schedule:
+  report_at: "11:00"
+  timezone: Asia/Almaty
+labels:
+  MINIO_BACKUPS: MinIO
+server:
+  addr: ":9090"
+  cache_ttl_today: 30s
+  cache_ttl_past: 2h
+`
+
+func TestLoadConfigБезGoogleНеРугается(t *testing.T) {
+	setSecrets(t)
+	os.Unsetenv("GOOGLE_OAUTH_CLIENT") // t.Setenv из setSecrets вернёт значение после теста
+
+	if _, err := LoadConfig(writeConfig(t, noGoogleYAML)); err != nil {
+		t.Fatalf("LoadConfig отверг конфиг без google: %v\nвеб-сервер обязан на нём стартовать", err)
+	}
+}
+
+func TestRequireGoogleНазываетВсеПропуски(t *testing.T) {
+	setSecrets(t)
+	os.Unsetenv("GOOGLE_OAUTH_CLIENT")
+
+	cfg, err := LoadConfig(writeConfig(t, noGoogleYAML))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	err = cfg.RequireGoogle()
+	if err == nil {
+		t.Fatal("RequireGoogle промолчал на конфиге без google")
+	}
+	for _, want := range []string{
+		"GOOGLE_OAUTH_CLIENT",
+		"google.folder_id",
+		"google.token_path",
+		"google.retention_days",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("в ошибке нет упоминания %q; получено: %v", want, err)
+		}
+	}
+}
+
+func TestRequireGoogleМолчитНаПолномКонфиге(t *testing.T) {
+	setSecrets(t)
+
+	cfg, err := LoadConfig(writeConfig(t, goodYAML))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if err := cfg.RequireGoogle(); err != nil {
+		t.Fatalf("RequireGoogle ругнулся на полный конфиг: %v", err)
+	}
+}
+
+func TestServerПоУмолчанию(t *testing.T) {
+	setSecrets(t)
+
+	cfg, err := LoadConfig(writeConfig(t, goodYAML)) // блока server в нём нет
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := cfg.Server.Addr; got != ":8080" {
+		t.Errorf("Server.Addr = %q, ожидалось \":8080\"", got)
+	}
+	if got := cfg.Server.CacheTTLToday; got != time.Minute {
+		t.Errorf("CacheTTLToday = %v, ожидалась 1m", got)
+	}
+	if got := cfg.Server.CacheTTLPast; got != time.Hour {
+		t.Errorf("CacheTTLPast = %v, ожидался 1h", got)
+	}
+}
+
+func TestServerИзФайлаПеребиваетУмолчания(t *testing.T) {
+	setSecrets(t)
+
+	cfg, err := LoadConfig(writeConfig(t, serverYAML))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Server.Addr != ":9090" {
+		t.Errorf("Server.Addr = %q, ожидалось \":9090\"", cfg.Server.Addr)
+	}
+	if cfg.Server.CacheTTLToday != 30*time.Second {
+		t.Errorf("CacheTTLToday = %v, ожидалось 30s", cfg.Server.CacheTTLToday)
+	}
+	if cfg.Server.CacheTTLPast != 2*time.Hour {
+		t.Errorf("CacheTTLPast = %v, ожидался 2h", cfg.Server.CacheTTLPast)
 	}
 }

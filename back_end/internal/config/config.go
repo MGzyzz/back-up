@@ -32,6 +32,14 @@ type Config struct {
 		TokenPath       string `yaml:"token_path"`
 		RetentionDays   int    `yaml:"retention_days"`
 	} `yaml:"google"`
+	// Server — настройки веб-сервера дашборда. Блок необязательный:
+	// пустые поля добираются значениями по умолчанию в prepare. Требовать
+	// его нельзя — это сломало бы cmd/report на существующих конфигах.
+	Server struct {
+		Addr          string        `yaml:"addr"`
+		CacheTTLToday time.Duration `yaml:"cache_ttl_today"`
+		CacheTTLPast  time.Duration `yaml:"cache_ttl_past"`
+	} `yaml:"server"`
 	Labels map[string]string `yaml:"labels"`
 
 	rawAPIID string // TELEGRAM_API_ID как пришёл из окружения, до разбора
@@ -106,19 +114,6 @@ func (c *Config) prepare() error {
 		errs = append(errs, errors.New("telegram.session_path обязателен"))
 	}
 
-	if c.Google.OAuthClientPath == "" {
-		errs = append(errs, errors.New("переменная окружения GOOGLE_OAUTH_CLIENT не задана"))
-	}
-	if c.Google.FolderID == "" {
-		errs = append(errs, errors.New("google.folder_id обязателен"))
-	}
-	if c.Google.TokenPath == "" {
-		errs = append(errs, errors.New("google.token_path обязателен"))
-	}
-	if c.Google.RetentionDays <= 0 {
-		errs = append(errs, errors.New("google.retention_days должен быть > 0"))
-	}
-
 	if len(c.Labels) == 0 {
 		errs = append(errs, errors.New("labels не может быть пустым"))
 	}
@@ -136,6 +131,41 @@ func (c *Config) prepare() error {
 		errs = append(errs, fmt.Errorf("schedule.timezone: %w", err))
 	} else {
 		c.loc = loc
+	}
+
+	// Умолчания веб-сервера. Не ошибки: блок server необязателен.
+	if c.Server.Addr == "" {
+		c.Server.Addr = ":8080"
+	}
+	if c.Server.CacheTTLToday <= 0 {
+		c.Server.CacheTTLToday = time.Minute
+	}
+	if c.Server.CacheTTLPast <= 0 {
+		c.Server.CacheTTLPast = time.Hour
+	}
+
+	return errors.Join(errs...)
+}
+
+// RequireGoogle проверяет настройки публикации в Google.
+//
+// Отдельно от prepare, потому что их требует только cmd/report: веб-серверу
+// дашборда Google не нужен, и падать на старте из-за незаданного токена
+// он не должен.
+func (c *Config) RequireGoogle() error {
+	var errs []error
+
+	if c.Google.OAuthClientPath == "" {
+		errs = append(errs, errors.New("переменная окружения GOOGLE_OAUTH_CLIENT не задана"))
+	}
+	if c.Google.FolderID == "" {
+		errs = append(errs, errors.New("google.folder_id обязателен"))
+	}
+	if c.Google.TokenPath == "" {
+		errs = append(errs, errors.New("google.token_path обязателен"))
+	}
+	if c.Google.RetentionDays <= 0 {
+		errs = append(errs, errors.New("google.retention_days должен быть > 0"))
 	}
 
 	return errors.Join(errs...)

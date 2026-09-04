@@ -88,6 +88,11 @@ func run(ctx context.Context, opts options) error {
 	if err != nil {
 		return err
 	}
+	// Публикация в Google — работа именно этой команды, поэтому её настройки
+	// проверяем здесь, а не в LoadConfig: веб-сервер обходится без них.
+	if err := cfg.RequireGoogle(); err != nil {
+		return err
+	}
 
 	tg := telegram.New(telegram.Config{
 		APIID:       cfg.Telegram.APIID,
