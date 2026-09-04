@@ -227,3 +227,49 @@ main               13.0%
 и весь порядок шагов. Они покрыты почти полностью.
 
 
+
+## Дашборд
+
+Веб-интерфейс по тем же данным: выбираешь дату — видишь, какие бэкапы
+в каких средах прошли. Данные живые, из Telegram, а не из вчерашнего файла.
+
+### Запуск
+
+```sh
+cp back_end/.env.example back_end/.env   # заполнить TELEGRAM_*
+docker compose up -d
+```
+
+Дашборд — на http://localhost:8080
+
+### Вход в Telegram
+
+Сессия нужна одна и на сервер, и на отчёты. Если `data/session.json` ещё нет
+или он протух (дашборд отвечает «сервер не может войти в Telegram»):
+
+```sh
+docker compose run --rm -it back_end /app/report -login
+```
+
+На Linux файл сессии окажется под UID пользователя контейнера (10001).
+Если после этого локальный `go run` перестанет читать сессию — поправьте
+владельца: `sudo chown $(id -u) back_end/data/session.json`.
+
+### Разработка без Docker
+
+```sh
+cd back_end && ./env.sh && go run ./cmd/server   # бэк на :8080
+cd front_end && npm run dev                       # фронт на :5173
+```
+
+Vite проксирует `/api` на бэк, поэтому CORS не нужен и в деве.
+
+### Два бинаря
+
+| Бинарь | Что делает | Нужен ли Google |
+|---|---|---|
+| `cmd/report` | отчёт в Google Sheets, cron, `-daemon`, `-login` | да |
+| `cmd/server` | HTTP-API дашборда | нет |
+
+Сервер не импортирует `internal/gsheets` — в его образе нет ни кода Google API,
+ни OAuth-токена.
