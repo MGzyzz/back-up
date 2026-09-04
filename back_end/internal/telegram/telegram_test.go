@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,4 +122,43 @@ func TestResendHint(t *testing.T) {
 	if got := resendHint(nil); got != "" {
 		t.Errorf("nil ожидал пустую подсказку, получил %q", got)
 	}
+}
+
+func TestPeerНеЗапомненСразуПослеСоздания(t *testing.T) {
+	c := New(Config{ChannelID: 123, Location: time.UTC})
+
+	if _, ok := c.cachedPeer(); ok {
+		t.Error("клиент отдал peer, которого ещё не искал")
+	}
+}
+
+func TestPeerЗапоминаетсяИОтдаётся(t *testing.T) {
+	c := New(Config{ChannelID: 123, Location: time.UTC})
+	want := &tg.InputPeerChannel{ChannelID: 123, AccessHash: 999}
+
+	c.rememberPeer(want)
+
+	got, ok := c.cachedPeer()
+	if !ok {
+		t.Fatal("клиент не отдал запомненный peer")
+	}
+	if got != want {
+		t.Errorf("отдан %#v, ожидался %#v", got, want)
+	}
+}
+
+func TestPeerБезопасенДляПараллельногоДоступа(t *testing.T) {
+	// Веб-сервер раздаёт запросы по горутинам, и клиент один на всех.
+	c := New(Config{ChannelID: 123, Location: time.UTC})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.rememberPeer(&tg.InputPeerChannel{ChannelID: 123, AccessHash: 999})
+			c.cachedPeer()
+		}()
+	}
+	wg.Wait()
 }

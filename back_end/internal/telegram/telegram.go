@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gotd/td/session"
@@ -54,6 +55,13 @@ type Config struct {
 type Client struct {
 	cfg       Config
 	channelID int64 // ID, приведённый к виду MTProto
+
+	// peer запоминается между запросами: access_hash у аккаунта постоянен,
+	// а добывается обходом всех диалогов по обеим папкам — дорого повторять
+	// это на каждом запросе веб-сервера. Мьютекс нужен потому, что клиент
+	// один на все горутины сервера.
+	peerMu sync.Mutex
+	peer   tg.InputPeerClass
 }
 
 func New(cfg Config) *Client {
@@ -311,6 +319,10 @@ func eachChannel(ctx context.Context, api *tg.Client, fn func(ch *tg.Channel) bo
 // нет и быть не может: он свой у каждого аккаунта. Список диалогов — способ
 // его получить, работающий и для приватного канала без username.
 func (c *Client) resolvePeer(ctx context.Context, api *tg.Client) (tg.InputPeerClass, error) {
+	if peer, ok := c.cachedPeer(); ok {
+		return peer, nil
+	}
+
 	var peer tg.InputPeerClass
 	err := eachChannel(ctx, api, func(ch *tg.Channel) bool {
 		if ch.ID != c.channelID {
@@ -325,7 +337,23 @@ func (c *Client) resolvePeer(ctx context.Context, api *tg.Client) (tg.InputPeerC
 	if peer == nil {
 		return nil, fmt.Errorf("канал %d не найден среди диалогов аккаунта", c.channelID)
 	}
+
+	c.rememberPeer(peer)
 	return peer, nil
+}
+
+// cachedPeer отдаёт запомненный peer канала, если он уже находился.
+func (c *Client) cachedPeer() (tg.InputPeerClass, bool) {
+	c.peerMu.Lock()
+	defer c.peerMu.Unlock()
+	return c.peer, c.peer != nil
+}
+
+// rememberPeer запоминает найденный peer до конца жизни процесса.
+func (c *Client) rememberPeer(p tg.InputPeerClass) {
+	c.peerMu.Lock()
+	defer c.peerMu.Unlock()
+	c.peer = p
 }
 
 // fetchRange листает историю назад от to, пока не дойдёт до from.
