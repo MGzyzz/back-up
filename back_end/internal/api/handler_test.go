@@ -94,7 +94,10 @@ func TestДатаБезПараметраЭтоСегодня(t *testing.T) {
 	srv := newTestServer(t, fakeSource{})
 	defer srv.Close()
 
-	res, _ := http.Get(srv.URL + "/api/report")
+	res, err := http.Get(srv.URL + "/api/report")
+	if err != nil {
+		t.Fatalf("запрос: %v", err)
+	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
@@ -111,7 +114,10 @@ func TestКриваяДатаЭто400(t *testing.T) {
 	srv := newTestServer(t, fakeSource{})
 	defer srv.Close()
 
-	res, _ := http.Get(srv.URL + "/api/report?date=04.09.2026")
+	res, err := http.Get(srv.URL + "/api/report?date=04.09.2026")
+	if err != nil {
+		t.Fatalf("запрос: %v", err)
+	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusBadRequest {
@@ -129,7 +135,10 @@ func TestБудущаяДатаЭто400(t *testing.T) {
 	defer srv.Close()
 
 	tomorrow := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
-	res, _ := http.Get(srv.URL + "/api/report?date=" + tomorrow)
+	res, err := http.Get(srv.URL + "/api/report?date=" + tomorrow)
+	if err != nil {
+		t.Fatalf("запрос: %v", err)
+	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusBadRequest {
@@ -141,7 +150,10 @@ func TestПротухшаяСессияЭто503(t *testing.T) {
 	srv := newTestServer(t, fakeSource{err: telegram.ErrNoSession})
 	defer srv.Close()
 
-	res, _ := http.Get(srv.URL + "/api/report?date=2026-09-04")
+	res, err := http.Get(srv.URL + "/api/report?date=2026-09-04")
+	if err != nil {
+		t.Fatalf("запрос: %v", err)
+	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusServiceUnavailable {
@@ -158,7 +170,10 @@ func TestПрочаяОшибкаЭто502(t *testing.T) {
 	srv := newTestServer(t, fakeSource{err: errors.New("канал не найден среди диалогов")})
 	defer srv.Close()
 
-	res, _ := http.Get(srv.URL + "/api/report?date=2026-09-04")
+	res, err := http.Get(srv.URL + "/api/report?date=2026-09-04")
+	if err != nil {
+		t.Fatalf("запрос: %v", err)
+	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusBadGateway {
@@ -170,7 +185,10 @@ func TestHealth(t *testing.T) {
 	srv := newTestServer(t, fakeSource{})
 	defer srv.Close()
 
-	res, _ := http.Get(srv.URL + "/api/health")
+	res, err := http.Get(srv.URL + "/api/health")
+	if err != nil {
+		t.Fatalf("запрос: %v", err)
+	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
