@@ -400,3 +400,10 @@ func messagesOf(res tg.MessagesMessagesClass) ([]tg.MessageClass, error) {
 		return nil, fmt.Errorf("неожиданный ответ на getHistory: %T", res)
 	}
 }
+
+// FloodWaitFor сообщает, сколько Telegram просит подождать, если ошибка —
+// это FLOOD_WAIT. Живёт здесь, а не у вызывающей стороны, чтобы знание
+// про gotd не расползалось по пакетам.
+func FloodWaitFor(err error) (time.Duration, bool) {
+	return tgerr.AsFloodWait(err)
+}
