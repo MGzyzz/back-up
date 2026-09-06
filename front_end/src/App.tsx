@@ -108,10 +108,6 @@ export default function App() {
         onHideSuccessfulChange={setHideSuccessful}
       />
 
-      {state.kind === 'refreshing' && (
-        <div className="mb-4 h-0.5 animate-pulse rounded bg-blue-400" />
-      )}
-
       {state.kind === 'loading' && (
         <div className="space-y-4">
           {[0, 1, 2].map((i) => (
