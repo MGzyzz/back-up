@@ -85,16 +85,9 @@ export default function App() {
         // Редактирование черновика не отменяет загрузку выбранного отчёта.
         // Устаревший ответ отсекается в load, когда начинается новый запрос.
         onDateChange={setDraftDate}
-        onDateCommit={() => {
-          // Поле очистили — вернуть последнюю рабочую дату, а не запрашивать пустую.
-          if (!draftDate) {
-            setDraftDate(date)
-            return
-          }
-          // Тот же день не перезапрашиваем: для этого есть «Обновить».
-          if (draftDate !== date) setDate(draftDate)
-        }}
+        dateChanged={draftDate !== date}
         onRefresh={() => {
+          if (!draftDate) return
           if (draftDate === date) {
             load(date, true)
           } else {

@@ -38,7 +38,7 @@ async function editDate(value: string) {
   })
 }
 
-async function commitDate() {
+async function blurDate() {
   await act(async () => { dateInput().dispatchEvent(new FocusEvent('focusout', { bubbles: true })) })
 }
 
@@ -63,8 +63,13 @@ it.each(['restore', 'clear'])('завершает загрузку после р
   await act(async () => root.render(<App />))
   await editDate('2026-09-05')
   await editDate(action === 'restore' ? '2026-09-06' : '')
-  await commitDate()
+  await blurDate()
   await act(async () => pending.resolve(report('2026-09-06')))
+  if (action === 'clear') {
+    expect(dateInput().value).toBe('')
+    expect(refreshButton().disabled).toBe(true)
+    await editDate('2026-09-06')
+  }
   expect(dateInput().value).toBe('2026-09-06')
   expect(refreshButton().disabled).toBe(false)
   expect(container.textContent).toContain('За 2026-09-06')
@@ -77,7 +82,7 @@ it('не заменяет выбранный день запоздавшим о�
   vi.mocked(fetchReport).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
   await act(async () => root.render(<App />))
   await editDate('2026-09-05')
-  await commitDate()
+  await act(async () => refreshButton().click())
   await act(async () => second.resolve(report('2026-09-05')))
   await act(async () => first.resolve(report('2026-09-06')))
   expect(container.textContent).toContain('За 2026-09-05')
@@ -91,4 +96,32 @@ it('показывает отметку кэша без дополнительн
   await act(async () => root.render(<App />))
   expect(container.textContent).toContain('(из кэша)')
   expect(fetchReport).toHaveBeenCalledTimes(1)
+})
+
+
+it('применяет дату только по кнопке, без запроса при вводе и потере фокуса', async () => {
+  vi.mocked(fetchReport).mockImplementation(async (date) => report(date))
+  await act(async () => root.render(<App />))
+  await editDate('2026-08-06')
+  await editDate('2026-07-06')
+  await blurDate()
+  expect(fetchReport).toHaveBeenCalledTimes(1)
+  expect(window.location.search).toBe('?date=2026-09-06')
+  expect(refreshButton().textContent).toBe('Показать')
+  await act(async () => refreshButton().click())
+  expect(fetchReport).toHaveBeenLastCalledWith('2026-07-06')
+  expect(fetchReport).toHaveBeenCalledTimes(2)
+  expect(refreshButton().textContent).toBe('Обновить')
+  expect(window.location.search).toBe('?date=2026-07-06')
+})
+
+it('применяет дату при отправке формы с клавиатуры', async () => {
+  vi.mocked(fetchReport).mockImplementation(async (date) => report(date))
+  await act(async () => root.render(<App />))
+  await editDate('2026-09-05')
+  await act(async () => {
+    container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+  })
+  expect(fetchReport).toHaveBeenLastCalledWith('2026-09-05')
+  expect(fetchReport).toHaveBeenCalledTimes(2)
 })

@@ -3,8 +3,7 @@ import { todayISO } from '../lib/date'
 type Props = {
   date: string
   onDateChange: (date: string) => void
-  /** Пользователь закончил выбирать: календарь закрылся, фокус ушёл. */
-  onDateCommit: () => void
+  dateChanged: boolean
   onRefresh: () => void
   busy: boolean
   /** Когда сервер получил эти данные; null, пока данных нет. */
@@ -17,7 +16,7 @@ type Props = {
 export function DateBar({
   date,
   onDateChange,
-  onDateCommit,
+  dateChanged,
   onRefresh,
   busy,
   fetchedAt,
@@ -32,29 +31,24 @@ export function DateBar({
       className="mb-6 flex flex-wrap items-center gap-3"
       onSubmit={(event) => {
         event.preventDefault()
+        if (!date || (busy && !dateChanged)) return
         onRefresh()
       }}
     >
-      {/*
-        Запрос уходит по onBlur, а не по onChange: пока календарь открыт,
-        фокус остаётся в поле, поэтому листание месяцев не шлёт ничего вовсе.
-        Таймер тут не годится — любой порог пробивается медленным листанием.
-      */}
       <input
         type="date"
         aria-label="Дата отчёта"
         value={date}
         max={today}
         onChange={(e) => onDateChange(e.target.value)}
-        onBlur={onDateCommit}
         className="rounded border border-gray-300 bg-white px-3 py-1.5 text-gray-900 [color-scheme:light] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:[color-scheme:dark]"
       />
       <button
         type="submit"
-        disabled={busy || !date}
+        disabled={(busy && !dateChanged) || !date}
         className="min-w-32 cursor-pointer rounded border border-gray-300 px-3 py-1.5 hover:bg-gray-50 disabled:cursor-wait disabled:opacity-70 dark:border-gray-700 dark:hover:bg-gray-900"
       >
-        {busy ? (
+        {busy && !dateChanged ? (
           <span className="inline-flex items-center gap-2">
             <span
               aria-hidden="true"
@@ -63,7 +57,7 @@ export function DateBar({
             Обновление…
           </span>
         ) : (
-          'Обновить'
+          dateChanged ? 'Показать' : 'Обновить'
         )}
       </button>
       {fetchedAt && (
