@@ -157,7 +157,7 @@ func TestValidateRejectsBadTimezone(t *testing.T) {
 	}
 }
 
-// noGoogleYAML — конфиг без блока google. Ровно то, с чем стартует cmd/server.
+// noGoogleYAML — конфиг без блока google. Ровно то, с чем стартует cmd/api-server.
 const noGoogleYAML = `
 telegram:
   channel_id: -1001234567890
@@ -184,7 +184,7 @@ server:
   cache_ttl_past: 2h
 `
 
-func TestLoadConfigБезGoogleНеРугается(t *testing.T) {
+func TestLoadConfigWithoutGoogleSucceeds(t *testing.T) {
 	setSecrets(t)
 	os.Unsetenv("GOOGLE_OAUTH_CLIENT") // t.Setenv из setSecrets вернёт значение после теста
 
@@ -193,7 +193,7 @@ func TestLoadConfigБезGoogleНеРугается(t *testing.T) {
 	}
 }
 
-func TestRequireGoogleНазываетВсеПропуски(t *testing.T) {
+func TestRequireGoogleReportsAllMissingFields(t *testing.T) {
 	setSecrets(t)
 	os.Unsetenv("GOOGLE_OAUTH_CLIENT")
 
@@ -218,7 +218,7 @@ func TestRequireGoogleНазываетВсеПропуски(t *testing.T) {
 	}
 }
 
-func TestRequireGoogleМолчитНаПолномКонфиге(t *testing.T) {
+func TestRequireGoogleSucceedsWithCompleteConfig(t *testing.T) {
 	setSecrets(t)
 
 	cfg, err := LoadConfig(writeConfig(t, goodYAML))
@@ -230,7 +230,7 @@ func TestRequireGoogleМолчитНаПолномКонфиге(t *testing.T) {
 	}
 }
 
-func TestServerПоУмолчанию(t *testing.T) {
+func TestServerDefaults(t *testing.T) {
 	setSecrets(t)
 
 	cfg, err := LoadConfig(writeConfig(t, goodYAML)) // блока server в нём нет
@@ -248,7 +248,7 @@ func TestServerПоУмолчанию(t *testing.T) {
 	}
 }
 
-func TestServerИзФайлаПеребиваетУмолчания(t *testing.T) {
+func TestServerConfigOverridesDefaults(t *testing.T) {
 	setSecrets(t)
 
 	cfg, err := LoadConfig(writeConfig(t, serverYAML))

@@ -1,8 +1,6 @@
 services:
   back_end:
-    build:
-      context: ./back_end
-      dockerfile: ../docker/back_end.Dockerfile
+    build: ./back_end
     env_file:
       - ./back_end/.env
     volumes:
@@ -20,11 +18,7 @@ services:
     restart: unless-stopped
 
   front_end:
-    build:
-      context: ./front_end
-      dockerfile: ../docker/front_end.Dockerfile
-    volumes:
-      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    build: ./front_end
     ports:
       - "8080:80"
     depends_on:

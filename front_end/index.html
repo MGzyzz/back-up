@@ -5,6 +5,18 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Бэкапы</title>
+    <script>
+      let savedTheme = null
+      try {
+        savedTheme = localStorage.getItem('theme')
+      } catch {
+        // При недоступном localStorage используем системную тему.
+      }
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+      const isDark = savedTheme === 'dark' || (!savedTheme && prefersDark)
+      document.documentElement.classList.toggle('dark', isDark)
+      document.documentElement.style.colorScheme = isDark ? 'dark' : 'light'
+    </script>
   </head>
   <body>
     <div id="root"></div>

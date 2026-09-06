@@ -40,7 +40,7 @@
 |---|---|---|
 | Раскладка репозитория | Монорепо: `back_end/`, `front_end/`, `docker/` | Симметричные имена, один `docker compose up` для проверяющего |
 | Судьба Google Sheets | Остаётся нетронутой | Задание №1 в критериях приёмки заказчика |
-| Форма бэка | Два бинаря: `cmd/report`, `cmd/server` | Образ сервера не содержит ни кода Google API, ни OAuth-токена |
+| Форма бэка | Два бинаря: `cmd/report`, `cmd/api-server` | Образ сервера не содержит ни кода Google API, ни OAuth-токена |
 | Жизнь соединения | Соединение на запрос + кэш `access_hash` и результата | Обход диалогов дороже выгрузки истории и повторяется зря; кэш снимает риск `FLOOD_WAIT` |
 | HTTP-слой | Gin | Требуется для изучения |
 | Фронт | Vite + React + TypeScript + Tailwind v4 | Привычный стек; TS окупается на nullable-полях модели |
@@ -51,19 +51,17 @@
 ```
 back-up/
 ├── back_end/
+│   ├── Dockerfile
 │   ├── cmd/report/main.go     нынешний main.go, логика не меняется
-│   ├── cmd/server/main.go     новый: конфиг, клиент, http.Server, shutdown
+│   ├── cmd/api-server/main.go новый: конфиг, клиент, http.Server, shutdown
 │   ├── internal/api/          НОВЫЙ: хендлеры, DTO, кэш
 │   ├── internal/{telegram,parser,report,config,app,gsheets,dates}/
 │   ├── configs/  data/  secrets/
 │   ├── config.yaml  .env  .env.example  env.sh
 │   └── go.mod                 module backup-report — путь не меняется
 ├── front_end/
-│   ├── src/  index.html  vite.config.ts  package.json  tsconfig.json
-├── docker/
-│   ├── back_end.Dockerfile
-│   ├── front_end.Dockerfile
-│   └── nginx.conf
+│   ├── Dockerfile  nginx.conf
+│   └── src/  index.html  vite.config.ts  package.json  tsconfig.json
 ├── docs/
 ├── docker-compose.yml
 └── README.md
@@ -73,7 +71,7 @@ back-up/
 `backup-report/internal/parser` переезда не замечают.
 
 `internal/api` импортирует только `telegram`, `parser`, `report` и `config`.
-Ни `gsheets`, ни `app` — поэтому `cmd/server` не может утащить Google в бинарь.
+Ни `gsheets`, ни `app` — поэтому `cmd/api-server` не может утащить Google в бинарь.
 
 ## 5. Изменения в существующем коде
 
@@ -286,13 +284,13 @@ type State =
 
 ### 10.2 Образы
 
-- `docker/back_end.Dockerfile` — multistage: `golang:1.27-alpine` собирает
+- `back_end/Dockerfile` — multistage: `golang:1.27-alpine` собирает
   **оба** бинаря с `-trimpath`; рантайм `alpine`, непривилегированный
-  пользователь, `WORKDIR /app`, бинари в `/app/server` и `/app/report`,
-  `CMD` — `server`.
-- `docker/front_end.Dockerfile` — `node:22-alpine`, `npm ci && npm run build`,
-  затем `nginx:alpine` со статикой и `nginx.conf`.
-- `docker/nginx.conf` — `/api/` проксируется на `back_end:8080`, остальное
+  пользователь, `WORKDIR /app`, бинари в `/app/api-server` и `/app/report`,
+  `CMD` — `api-server`.
+- `front_end/Dockerfile` — `node:22-alpine`, `npm ci && npm run build`,
+  затем `nginx:alpine` со статикой и встроенным `nginx.conf`.
+- `front_end/nginx.conf` — `/api/` проксируется на `back_end:8080`, остальное
   падает в `index.html`.
 
 ### 10.3 Compose
@@ -300,21 +298,21 @@ type State =
 ```yaml
 services:
   back_end:
-    build: { context: ./back_end, dockerfile: ../docker/back_end.Dockerfile }
+    build: ./back_end
     env_file: [ ./back_end/.env ]
     volumes:
       - ./back_end/data:/app/data
       - ./back_end/config.yaml:/app/config.yaml:ro
     healthcheck: [ CMD, wget, -qO-, http://localhost:8080/api/health ]
   front_end:
-    build: { context: ./front_end, dockerfile: ../docker/front_end.Dockerfile }
+    build: ./front_end
     ports: [ "8080:80" ]
     depends_on: { back_end: { condition: service_healthy } }
 ```
 
-`dockerfile:` считается от compose-файла, `context:` — что уедет демону.
-Поэтому общая папка `docker/` не мешает каждому образу собирать только свою
-половину репозитория.
+Короткая запись `build: ./back_end` и `build: ./front_end` задаёт отдельный
+контекст каждого сервиса и берёт `Dockerfile` из его корня. Бэкенд и фронтенд
+можно собирать независимо, без путей за пределы контекста.
 
 **`WORKDIR /app`, и монтирование идёт туда же.** Флаг `-config` по умолчанию
 равен `config.yaml`, а `telegram.session_path` и `google.token_path` в конфиге
@@ -336,10 +334,11 @@ Compose не понимает `export` в `env_file`, а `env.sh` состоит
 ### 10.5 Логин
 
 ```sh
-docker compose run --rm -it back_end /app/report -login
+docker compose run --rm -it back_end /app/api-server -login
 ```
 
-Один раз, интерактивно; пишет `session.json` в смонтированный том. На
+`api-server -login` входит только в Telegram: Google дашборду не нужен. Один раз,
+интерактивно; пишет `session.json` в смонтированный том. На
 Linux-хосте файл окажется под UID контейнерного пользователя — в README будет
 строчка про это.
 
@@ -370,7 +369,7 @@ Linux-хосте файл окажется под UID контейнерного
 1. Переезд Go в `back_end/`, создание `docker/`; `go test ./...` зелёный
 2. `config`: `RequireGoogle()` и блок `server` с дефолтами
 3. `internal/api`: DTO, кэш, хендлеры — по TDD
-4. `cmd/server`: Gin, slog-middleware, graceful shutdown
+4. `cmd/api-server`: Gin, slog-middleware, graceful shutdown
 5. Кэш `access_hash` в `telegram.Client`
 6. `front_end`: каркас, типы, `lib/group` и `lib/format` с тестами
 7. Компоненты и шесть состояний экрана

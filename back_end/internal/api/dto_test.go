@@ -9,7 +9,7 @@ import (
 	"backup-report/internal/report"
 )
 
-func TestJobDTOСВременами(t *testing.T) {
+func TestJobDTOWithTimes(t *testing.T) {
 	start := time.Date(2026, 9, 4, 1, 0, 1, 0, time.UTC)
 	end := time.Date(2026, 9, 4, 2, 23, 20, 0, time.UTC)
 
@@ -31,7 +31,7 @@ func TestJobDTOСВременами(t *testing.T) {
 	}
 }
 
-func TestJobDTOБезВремёнДаётNull(t *testing.T) {
+func TestJobDTOWithoutTimesUsesNull(t *testing.T) {
 	// Статус ERROR: команда не запускалась, времён нет вовсе.
 	got := jobDTOs([]report.Job{{
 		Environment: "KT", Label: "MINIO_VK_CLOUD_BACKUP", Name: "MinIO VK Cloud",
@@ -52,7 +52,7 @@ func TestJobDTOБезВремёнДаётNull(t *testing.T) {
 	}
 }
 
-func TestNodesВсегдаМассив(t *testing.T) {
+func TestNodesAlwaysArray(t *testing.T) {
 	// У задачи без нод Nodes равен nil. В JSON это обязано быть [],
 	// иначе .map на фронте падает.
 	got := jobDTOs([]report.Job{{Environment: "KT", Name: "MinIO", Nodes: nil}})
@@ -63,7 +63,7 @@ func TestNodesВсегдаМассив(t *testing.T) {
 	}
 }
 
-func TestПустойСписокЗадачДаётМассив(t *testing.T) {
+func TestEmptyJobListIsArray(t *testing.T) {
 	raw, _ := json.Marshal(jobDTOs(nil))
 	if string(raw) != "[]" {
 		t.Errorf("пустой список задач дал %s, ожидалось []", raw)

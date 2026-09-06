@@ -20,7 +20,7 @@ func countingFetch(calls *atomic.Int32, err error) func(context.Context, time.Ti
 	}
 }
 
-func TestВторойЗапросБерётИзКэша(t *testing.T) {
+func TestSecondRequestUsesCache(t *testing.T) {
 	var calls atomic.Int32
 	l := newLoader(countingFetch(&calls, nil), time.UTC, time.Minute, time.Hour)
 	day := time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)
@@ -46,7 +46,7 @@ func TestВторойЗапросБерётИзКэша(t *testing.T) {
 	}
 }
 
-func TestИстёкшийTTLЗаставляетСходитьЗаново(t *testing.T) {
+func TestExpiredTTLFetchesAgain(t *testing.T) {
 	var calls atomic.Int32
 	l := newLoader(countingFetch(&calls, nil), time.UTC, time.Minute, time.Hour)
 	day := time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)
@@ -63,7 +63,7 @@ func TestИстёкшийTTLЗаставляетСходитьЗаново(t *te
 	}
 }
 
-func TestПрошедшийДеньЖивётДольше(t *testing.T) {
+func TestPastDayUsesLongerTTL(t *testing.T) {
 	var calls atomic.Int32
 	l := newLoader(countingFetch(&calls, nil), time.UTC, time.Minute, time.Hour)
 	past := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -80,7 +80,7 @@ func TestПрошедшийДеньЖивётДольше(t *testing.T) {
 	}
 }
 
-func TestОшибкаНеКэшируется(t *testing.T) {
+func TestErrorIsNotCached(t *testing.T) {
 	var calls atomic.Int32
 	boom := errors.New("канал недоступен")
 	l := newLoader(countingFetch(&calls, boom), time.UTC, time.Minute, time.Hour)
@@ -95,7 +95,7 @@ func TestОшибкаНеКэшируется(t *testing.T) {
 	}
 }
 
-func TestДесятьГорутинДаютОдинПоход(t *testing.T) {
+func TestTenGoroutinesTriggerSingleFetch(t *testing.T) {
 	var calls atomic.Int32
 	slow := func(_ context.Context, day time.Time) (ReportDTO, error) {
 		calls.Add(1)

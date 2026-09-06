@@ -8,13 +8,13 @@ export function JobRow({ job }: { job: Job }) {
   const nodes = job.ok ? job.node : job.nodes.join(', ')
 
   return (
-    <tr className="border-t border-gray-100">
-      <td className="py-2 pr-4"><StatusBadge ok={job.ok} /></td>
+    <tr className="border-t border-gray-100 dark:border-gray-800">
       <td className="py-2 pr-4 font-medium">{job.name}</td>
-      <td className="py-2 pr-4 tabular-nums text-gray-600">{formatTime(job.start)}</td>
-      <td className="py-2 pr-4 tabular-nums text-gray-600">{formatTime(job.end)}</td>
-      <td className="py-2 pr-4 tabular-nums text-gray-600">{formatDuration(job.duration_seconds)}</td>
-      <td className="py-2 text-gray-500">{nodes || '—'}</td>
+      <td className="py-2 pr-4"><StatusBadge ok={job.ok} /></td>
+      <td className="py-2 pr-4 tabular-nums text-gray-600 dark:text-gray-400">{formatTime(job.start)}</td>
+      <td className="py-2 pr-4 tabular-nums text-gray-600 dark:text-gray-400">{formatTime(job.end)}</td>
+      <td className="py-2 pr-4 tabular-nums text-gray-600 dark:text-gray-400">{formatDuration(job.duration_seconds)}</td>
+      <td className="py-2 text-gray-500 dark:text-gray-400">{nodes || '—'}</td>
     </tr>
   )
 }

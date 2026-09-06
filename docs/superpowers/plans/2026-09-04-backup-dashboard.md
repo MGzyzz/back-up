@@ -130,7 +130,7 @@ git commit -m "refactor: переезд бэка в back_end/, main.go в cmd/re
 и `setSecrets(t)` — пользуемся ими. Добавьте в конец файла:
 
 ```go
-// noGoogleYAML — конфиг без блока google. Ровно то, с чем стартует cmd/server.
+// noGoogleYAML — конфиг без блока google. Ровно то, с чем стартует cmd/api-server.
 const noGoogleYAML = `
 telegram:
   channel_id: -1001234567890
@@ -352,7 +352,7 @@ cd back_end && unset GOOGLE_OAUTH_CLIENT && go run ./cmd/report -config configs/
 
 ```yaml
 # Веб-сервер дашборда. Блок необязательный: показаны значения по умолчанию.
-# Читает его только cmd/server, cmd/report на него не смотрит.
+# Читает его только cmd/api-server, cmd/report на него не смотрит.
 server:
   addr: ":8080"
   # Сегодняшний день ещё дописывается, поэтому живёт в кэше недолго.
@@ -1303,10 +1303,10 @@ git commit -m "feat(api): ручки /api/report и /api/health на Gin
 
 ---
 
-### Task 6: cmd/server
+### Task 6: cmd/api-server
 
 **Files:**
-- Create: `back_end/cmd/server/main.go`
+- Create: `back_end/cmd/api-server/main.go`
 
 **Interfaces:**
 - Consumes: `config.LoadConfig`, `telegram.New`, `api.New`, `api.Handler.Register`
@@ -1429,7 +1429,7 @@ func logRequests(log *slog.Logger) gin.HandlerFunc {
 - [ ] **Step 2: Собрать и проверить, что бинарь есть**
 
 ```bash
-cd back_end && go build -o /tmp/server ./cmd/server && go vet ./cmd/server
+cd back_end && go build -o /tmp/api-server ./cmd/api-server && go vet ./cmd/api-server
 ```
 
 Ожидается: сборка проходит, `go vet` молчит.
@@ -1437,7 +1437,7 @@ cd back_end && go build -o /tmp/server ./cmd/server && go vet ./cmd/server
 - [ ] **Step 3: Проверить, что Google не попал в бинарь сервера**
 
 ```bash
-cd back_end && go list -deps ./cmd/server | grep -c "backup-report/internal/gsheets"
+cd back_end && go list -deps ./cmd/api-server | grep -c "backup-report/internal/gsheets"
 ```
 
 Ожидается: `0`. Это и есть смысл разделения бинарей.
@@ -1450,7 +1450,7 @@ cd back_end && go list -deps ./cmd/server | grep -c "backup-report/internal/gshe
 cd back_end
 export TELEGRAM_API_ID TELEGRAM_API_HASH TELEGRAM_PHONE   # из своего .env или env.sh
 unset GOOGLE_OAUTH_CLIENT
-go run ./cmd/server &
+go run ./cmd/api-server &
 sleep 3
 curl -s localhost:8080/api/health; echo
 curl -s -o /dev/null -w 'report: %{http_code}\n' 'localhost:8080/api/report?date=2026-09-01'
@@ -1463,7 +1463,7 @@ curl -s -o /dev/null -w 'report: %{http_code}\n' 'localhost:8080/api/report?date
 - [ ] **Step 5: Commit**
 
 ```bash
-git add back_end/cmd/server/
+git add back_end/cmd/api-server/
 git commit -m "feat: бинарь server — дашборд по HTTP
 
 Gin поверх internal/api, лог запросов через slog, graceful shutdown
@@ -2248,7 +2248,7 @@ cd front_end && npx tsc --noEmit && npm run build && npm test
 В одном терминале:
 
 ```bash
-cd back_end && set -a && . ./.env && set +a && go run ./cmd/server
+cd back_end && set -a && . ./.env && set +a && go run ./cmd/api-server
 ```
 
 В другом:
@@ -2280,21 +2280,21 @@ git commit -m "feat(front): экран дашборда с секцией на �
 ### Task 10: Docker, compose и README
 
 **Files:**
-- Create: `docker/back_end.Dockerfile`
-- Create: `docker/front_end.Dockerfile`
-- Create: `docker/nginx.conf`
+- Create: `back_end/Dockerfile`
+- Create: `front_end/Dockerfile`
+- Create: `front_end/nginx.conf`
 - Create: `docker-compose.yml`
 - Create: `back_end/.env.example`
 - Modify: `back_end/env.sh`
 - Modify: `README.md`
 
 **Interfaces:**
-- Consumes: бинари `server` и `report` (Tasks 6, 1); сборка фронта (Task 9)
+- Consumes: бинари `api-server` и `report` (Tasks 6, 1); сборка фронта (Task 9)
 - Produces: `docker compose up` поднимает дашборд на `http://localhost:8080`
 
 - [ ] **Step 1: Написать Dockerfile бэка**
 
-`docker/back_end.Dockerfile`:
+`back_end/Dockerfile`:
 
 ```dockerfile
 # syntax=docker/dockerfile:1
@@ -2305,7 +2305,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server && \
+RUN go build -trimpath -ldflags="-s -w" -o /out/api-server ./cmd/api-server && \
     go build -trimpath -ldflags="-s -w" -o /out/report ./cmd/report
 
 FROM alpine:3.21
@@ -2319,15 +2319,15 @@ RUN apk add --no-cache ca-certificates tzdata && \
 # пути из конфига (data/session.json) одинаково работают на хосте
 # и в контейнере, и второй конфиг не нужен.
 WORKDIR /app
-COPY --from=build /out/server /out/report /app/
+COPY --from=build /out/api-server /out/report /app/
 USER app
 EXPOSE 8080
-CMD ["/app/server"]
+CMD ["/app/api-server"]
 ```
 
 - [ ] **Step 2: Написать Dockerfile фронта и конфиг nginx**
 
-`docker/front_end.Dockerfile`:
+`front_end/Dockerfile`:
 
 ```dockerfile
 # syntax=docker/dockerfile:1
@@ -2341,12 +2341,14 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=build /src/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 ```
 
-`nginx.conf` в образ не копируется намеренно: он лежит в общей папке `docker/`, вне контекста сборки фронта, и подкладывается томом из compose. Так его можно править без пересборки образа.
+`nginx.conf` копируется в образ из контекста `front_end/`, поэтому образ
+самодостаточен и не зависит от bind mount при запуске.
 
-`docker/nginx.conf`:
+`front_end/nginx.conf`:
 
 ```nginx
 server {
@@ -2380,9 +2382,7 @@ server {
 ```yaml
 services:
   back_end:
-    build:
-      context: ./back_end
-      dockerfile: ../docker/back_end.Dockerfile
+    build: ./back_end
     env_file:
       - ./back_end/.env
     volumes:
@@ -2400,11 +2400,7 @@ services:
     restart: unless-stopped
 
   front_end:
-    build:
-      context: ./front_end
-      dockerfile: ../docker/front_end.Dockerfile
-    volumes:
-      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    build: ./front_end
     ports:
       - "8080:80"
     depends_on:
@@ -2475,7 +2471,7 @@ docker compose logs back_end | head -20
 - [ ] **Step 8: Проверить логин внутри контейнера**
 
 ```bash
-docker compose run --rm -it back_end /app/report -login
+docker compose run --rm -it back_end /app/api-server -login
 ```
 
 Ожидается: приглашение ввести код из Telegram. Прерывать можно по Ctrl+C — проверяем, что интерактивный режим доступен, а не проходим вход заново.
@@ -2505,7 +2501,7 @@ docker compose up -d
 или он протух (дашборд отвечает «сервер не может войти в Telegram»):
 
 ```sh
-docker compose run --rm -it back_end /app/report -login
+docker compose run --rm -it back_end /app/api-server -login
 ```
 
 На Linux файл сессии окажется под UID пользователя контейнера (10001).
@@ -2515,7 +2511,7 @@ docker compose run --rm -it back_end /app/report -login
 ### Разработка без Docker
 
 ```sh
-cd back_end && ./env.sh && go run ./cmd/server   # бэк на :8080
+cd back_end && ./env.sh && go run ./cmd/api-server   # бэк на :8080
 cd front_end && npm run dev                       # фронт на :5173
 ```
 
@@ -2526,7 +2522,7 @@ Vite проксирует `/api` на бэк, поэтому CORS не нуже�
 | Бинарь | Что делает | Нужен ли Google |
 |---|---|---|
 | `cmd/report` | отчёт в Google Sheets, cron, `-daemon`, `-login` | да |
-| `cmd/server` | HTTP-API дашборда | нет |
+| `cmd/api-server` | HTTP-API дашборда | нет |
 
 Сервер не импортирует `internal/gsheets` — в его образе нет ни кода Google API,
 ни OAuth-токена.

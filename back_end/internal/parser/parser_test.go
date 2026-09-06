@@ -19,6 +19,7 @@ var testLabels = map[string]string{
 	"MONGODB_BACKUP_REMOTE_REPO": "MongoDB",
 	"MINIO_BACKUPS":              "MinIO",
 	"MINIO_BACKUPS_AI_BUCKET":    "MinIO",
+	"MINIO_VK_CLOUD_BACKUP":      "MinIO VK Cloud",
 }
 
 // Фиксированная зона вместо time.LoadLocation: тест не зависит от tzdata на машине.
@@ -111,6 +112,22 @@ func TestParse(t *testing.T) {
 				Status:      StatusSuccess,
 				Start:       at(1, 0, 3),
 				End:         at(5, 20, 52),
+			},
+		},
+		{
+			// Формат Alertmanager. Спайк записал, что FAILED в канале
+			// не встречается, — на самом деле провал приходит вот так,
+			// и до этой правки такие сообщения молча выпадали из отчёта.
+			name: "firing — это провал",
+			file: "firing_failed.txt",
+			date: received,
+			want: Backup{
+				Environment: "KT",
+				Node:        "kt-backup01",
+				Type:        "MinIO VK Cloud",
+				Status:      StatusFailed,
+				Start:       time.Date(2026, 9, 6, 10, 0, 2, 0, testLoc),
+				End:         time.Date(2026, 9, 6, 11, 49, 24, 0, testLoc),
 			},
 		},
 		{

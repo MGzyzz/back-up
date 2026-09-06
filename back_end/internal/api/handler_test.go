@@ -55,7 +55,7 @@ func newTestServer(t *testing.T, src Source) *httptest.Server {
 	return httptest.NewServer(r)
 }
 
-func TestОтчётЗаДень(t *testing.T) {
+func TestReportForDay(t *testing.T) {
 	at := time.Date(2026, 9, 4, 2, 30, 0, 0, time.UTC)
 	srv := newTestServer(t, fakeSource{msgs: []parser.RawMessage{
 		{Date: at, Text: successMsg},
@@ -91,7 +91,7 @@ func TestОтчётЗаДень(t *testing.T) {
 	}
 }
 
-func TestДатаБезПараметраЭтоСегодня(t *testing.T) {
+func TestMissingDateDefaultsToToday(t *testing.T) {
 	srv := newTestServer(t, fakeSource{})
 	defer srv.Close()
 
@@ -111,7 +111,7 @@ func TestДатаБезПараметраЭтоСегодня(t *testing.T) {
 	}
 }
 
-func TestКриваяДатаЭто400(t *testing.T) {
+func TestMalformedDateReturns400(t *testing.T) {
 	srv := newTestServer(t, fakeSource{})
 	defer srv.Close()
 
@@ -131,7 +131,7 @@ func TestКриваяДатаЭто400(t *testing.T) {
 	}
 }
 
-func TestБудущаяДатаЭто400(t *testing.T) {
+func TestFutureDateReturns400(t *testing.T) {
 	srv := newTestServer(t, fakeSource{})
 	defer srv.Close()
 
@@ -147,7 +147,7 @@ func TestБудущаяДатаЭто400(t *testing.T) {
 	}
 }
 
-func TestПротухшаяСессияЭто503(t *testing.T) {
+func TestExpiredSessionReturns503(t *testing.T) {
 	srv := newTestServer(t, fakeSource{err: telegram.ErrNoSession})
 	defer srv.Close()
 
@@ -167,7 +167,7 @@ func TestПротухшаяСессияЭто503(t *testing.T) {
 	}
 }
 
-func TestFloodWaitЭто503СЗаголовкомRetryAfter(t *testing.T) {
+func TestFloodWaitReturns503WithRetryAfterHeader(t *testing.T) {
 	// Telegram отвечает FLOOD_WAIT_42, когда запросов было слишком много.
 	srv := newTestServer(t, fakeSource{err: tgerr.New(420, "FLOOD_WAIT_42")})
 	defer srv.Close()
@@ -195,7 +195,7 @@ func TestFloodWaitЭто503СЗаголовкомRetryAfter(t *testing.T) {
 	}
 }
 
-func TestПрочаяОшибкаЭто502(t *testing.T) {
+func TestOtherErrorReturns502(t *testing.T) {
 	srv := newTestServer(t, fakeSource{err: errors.New("канал не найден среди диалогов")})
 	defer srv.Close()
 

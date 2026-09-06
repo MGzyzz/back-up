@@ -97,7 +97,12 @@ func Parse(m RawMessage, labels map[string]string, loc *time.Location) (Backup, 
 	switch {
 	case raw == "SUCCESS":
 		status = StatusSuccess
-	case raw == "FAILED":
+	// FIRING — формат Alertmanager: алерт активен. В канал такие приходят
+	// с ALERT: BACKUP FAILED и обоими временами, то есть бэкап шёл и упал.
+	// Это тот самый провал, которого «не нашлось» в спайке: FAILED в чистом
+	// виде канал не шлёт вовсе, он шлёт FIRING. До этой правки такие
+	// сообщения выпадали из отчёта, и день выглядел благополучнее, чем был.
+	case raw == "FAILED", raw == "FIRING":
 		status = StatusFailed
 	case strings.Contains(strings.ToLower(raw), "error"):
 		status = StatusError

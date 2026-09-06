@@ -124,7 +124,7 @@ func TestResendHint(t *testing.T) {
 	}
 }
 
-func TestPeerНеЗапомненСразуПослеСоздания(t *testing.T) {
+func TestPeerInitiallyNotCached(t *testing.T) {
 	c := New(Config{ChannelID: 123, Location: time.UTC})
 
 	if _, ok := c.cachedPeer(); ok {
@@ -132,7 +132,7 @@ func TestPeerНеЗапомненСразуПослеСоздания(t *testing
 	}
 }
 
-func TestPeerЗапоминаетсяИОтдаётся(t *testing.T) {
+func TestPeerCanBeCachedAndRetrieved(t *testing.T) {
 	c := New(Config{ChannelID: 123, Location: time.UTC})
 	want := &tg.InputPeerChannel{ChannelID: 123, AccessHash: 999}
 
@@ -147,7 +147,7 @@ func TestPeerЗапоминаетсяИОтдаётся(t *testing.T) {
 	}
 }
 
-func TestPeerБезопасенДляПараллельногоДоступа(t *testing.T) {
+func TestPeerIsSafeForConcurrentAccess(t *testing.T) {
 	// Веб-сервер раздаёт запросы по горутинам, и клиент один на всех.
 	c := New(Config{ChannelID: 123, Location: time.UTC})
 

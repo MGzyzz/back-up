@@ -1,5 +1,6 @@
-// Команда server отдаёт по HTTP отчёт по бэкапам за сутки — то же, что
-// cmd/report кладёт в Google Sheets, но по живым данным и в JSON.
+// Команда api-server отдаёт по HTTP отчёт по бэкапам за сутки — то же, что
+// cmd/report кладёт в Google Sheets, но по живым данным и в JSON. Флаг
+// -login выполняет отдельный вход только в Telegram для запуска дашборда.
 //
 // Google этой команде не нужен: config.RequireGoogle она не зовёт,
 // и пакет internal/gsheets в её зависимостях не появляется.
@@ -25,6 +26,7 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "путь к конфигу")
+	login := flag.Bool("login", false, "интерактивный вход только в Telegram, затем выход")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -32,13 +34,17 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, *configPath); err != nil {
-		slog.Error("сервер остановлен с ошибкой", "err", err)
+	if err := run(ctx, *configPath, *login); err != nil {
+		message := "сервер остановлен с ошибкой"
+		if *login {
+			message = "вход в Telegram завершился с ошибкой"
+		}
+		slog.Error(message, "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, configPath string) error {
+func run(ctx context.Context, configPath string, login bool) error {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return err
@@ -52,6 +58,11 @@ func run(ctx context.Context, configPath string) error {
 		ChannelID:   cfg.Telegram.ChannelID,
 		Location:    cfg.Location(),
 	})
+	if login {
+		// Дашборду нужна только Telegram-сессия. Старый /app/report -login
+		// намеренно оставляем без изменений: он настраивает ещё и Google.
+		return tg.Login(ctx)
+	}
 
 	h := api.New(api.Options{
 		Labels:        cfg.Labels,

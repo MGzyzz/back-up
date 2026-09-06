@@ -6,7 +6,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server && \
+RUN go build -trimpath -ldflags="-s -w" -o /out/api-server ./cmd/api-server && \
     go build -trimpath -ldflags="-s -w" -o /out/report ./cmd/report
 
 FROM alpine:3.21
@@ -24,7 +24,7 @@ WORKDIR /app
 # именованного тома (Docker создаст его от root). Для бинд-монта (как в
 # compose) это не поможет — там права диктует хост, см. README.
 RUN mkdir -p /app/data && chown app:app /app/data
-COPY --from=build /out/server /out/report /app/
+COPY --from=build /out/api-server /out/report /app/
 USER app
 EXPOSE 8080
-CMD ["/app/server"]
+CMD ["/app/api-server"]

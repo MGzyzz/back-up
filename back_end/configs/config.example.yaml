@@ -60,8 +60,14 @@ labels:
   # попадёт в отчёт, только под именем "UNKNOWN (МЕТКА)".
   "BAITEREK COPY TO SECOND VM": Baiterek copy to VM2
 
+  # GitLab и Jira: основной бэкап и отдельная задача ротации.
+  GITLAB_BACKUP: GitLab
+  GITLAB_BACKUP_ROTATION: GitLab Rotation
+  JIRA_BACKUP: Jira
+  JIRA_BACKUP_ROTATION: Jira Rotation
+
 # Веб-сервер дашборда. Блок необязательный: показаны значения по умолчанию.
-# Читает его только cmd/server, cmd/report на него не смотрит.
+# Читает его только cmd/api-server, cmd/report на него не смотрит.
 server:
   addr: ":8080"
   # Сегодняшний день ещё дописывается, поэтому живёт в кэше недолго.
