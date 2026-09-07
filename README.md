@@ -3,7 +3,9 @@
 
 ## Требования
 
-- Go 1.27+
+- Для дашборда: Docker с Docker Compose; Google не требуется.
+- Для запуска Go-команд без Docker: Go 1.27+.
+- Для разработки фронтенда без Docker: Node.js 22+ и npm.
 - Telegram-аккаунт, состоящий в канале с уведомлениями
 - Google-аккаунт с папкой для отчётов
 
@@ -34,6 +36,9 @@
 > Рабочая почта с Общим диском на момент разработки (28.07.2026) отсутствовала.
 
 ## Конфигурация
+
+Команды разделов «Конфигурация» и «Запуск» выполняются из `back_end/`.
+Из корня клона сначала выполните `cd back_end`.
 
 Скопировать `configs/config.example.yaml` в `config.yaml` и заполнить:
 
@@ -76,7 +81,7 @@ export GOOGLE_OAUTH_CLIENT=/path/to/client_secret.json
 ### 1. Собрать
 
 ```sh
-go build -o backup-report .
+go build -o backup-report ./cmd/report
 ```
 
 ### 2. Заполнить конфиг и секреты
@@ -190,7 +195,7 @@ CHANNEL_ID     НАЗВАНИЕ
 ## Устройство
 
 ```
-main.go                 флаги, интерактивные режимы, сборка зависимостей, коды возврата
+back_end/cmd/report/main.go  флаги, интерактивные режимы, сборка зависимостей, коды возврата
 internal/app/           последовательность шагов: прочитать, разобрать, опубликовать, прибрать
 internal/config/        конфиг, секреты из окружения, валидация
 internal/dates/         операции над сутками, общие для транспорта и отчёта
@@ -200,6 +205,8 @@ internal/telegram/      MTProto: вход, поиск канала, чтение
 internal/gsheets/       OAuth, создание файла, заливка, листинг, чистка
 ```
 ## Тесты
+
+Из каталога `back_end/`:
 
 ```sh
 go test ./...
@@ -236,8 +243,25 @@ main               13.0%
 ### Запуск
 
 ```sh
-cp back_end/.env.example back_end/.env   # заполнить TELEGRAM_*
+# Все команды дашборда выполняются из корня клона.
+cp back_end/.env.example back_end/.env
+cp back_end/configs/config.example.yaml back_end/config.yaml
+mkdir -p back_end/data
+chmod 600 back_end/.env back_end/config.yaml
+```
+
+В `.env` заполнить `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_PHONE`;
+при включённой 2FA также `TELEGRAM_2FA_PASSWORD`. В `config.yaml` указать
+`telegram.channel_id` и проверить `schedule.timezone` и карту `labels`.
+Настройки Google для дашборда заполнять не требуется.
+На Linux перед входом настройте права каталога `data`, как описано ниже.
+
+```sh
+docker compose build
+docker compose run --rm -it back_end /app/api-server -login
 docker compose up -d
+docker compose ps
+curl --fail http://localhost:8080/api/health
 ```
 
 Дашборд — на http://localhost:8080
@@ -284,8 +308,20 @@ docker compose run --rm -it back_end /app/api-server -login
 ### Разработка без Docker
 
 ```sh
-cd back_end && source ./env.sh && go run ./cmd/api-server   # бэк на :8080
-cd front_end && npm run dev                       # фронт на :5173
+# Терминал 1, из корня проекта. .env и config.yaml подготовлены выше.
+cd back_end
+set -a
+. ./.env
+set +a
+go run ./cmd/api-server   # бэк на :8080
+```
+
+В другом терминале, из корня проекта:
+
+```sh
+cd front_end
+npm ci
+npm run dev              # фронт на :5173
 ```
 
 Vite проксирует `/api` на бэк, поэтому CORS не нужен и в деве.
@@ -297,5 +333,5 @@ Vite проксирует `/api` на бэк, поэтому CORS не нуже�
 | `cmd/report` | отчёт в Google Sheets, cron, `-daemon`, `-login` | да |
 | `cmd/api-server` | HTTP-API дашборда | нет |
 
-Сервер не импортирует `internal/gsheets` — в его образе нет ни кода Google API,
-ни OAuth-токена.
+Бинарь `api-server` не импортирует `internal/gsheets`. Docker-образ также
+содержит отдельный бинарь `report`, но секреты Google в образ не копируются.
