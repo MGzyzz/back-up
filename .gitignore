@@ -24,3 +24,6 @@ back_end/report
 
 front_end/node_modules/
 front_end/dist/
+
+# Локальная документация и планы
+/docs/
