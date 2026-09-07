@@ -92,7 +92,7 @@ func TestSecretsAreNeverReadFromYAML(t *testing.T) {
 }
 
 // Главный тест файла: пропущенные поля превращаются в нули, и Validate обязан их поймать.
-// Google сюда не входит: его проверяет RequireGoogle, см. TestRequireGoogleНазываетВсеПропуски.
+// Google сюда не входит: его проверяет RequireGoogle, см. TestRequireGoogleReportsAllMissingFields.
 func TestValidateCatchesZeroValues(t *testing.T) {
 	setSecrets(t)
 
@@ -115,7 +115,7 @@ func TestValidateCatchesZeroValues(t *testing.T) {
 }
 
 // GOOGLE_OAUTH_CLIENT сюда не входит: его проверяет RequireGoogle,
-// см. TestRequireGoogleНазываетВсеПропуски.
+// см. TestRequireGoogleReportsAllMissingFields.
 func TestValidateRequiresSecretsFromEnv(t *testing.T) {
 	t.Setenv("TELEGRAM_API_ID", "")
 	t.Setenv("TELEGRAM_API_HASH", "")
