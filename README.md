@@ -119,7 +119,7 @@ docker compose run --rm -it back_end /app/api-server -login
 docker compose run --rm back_end /app/report -channels
 ```
 
-Команда выводит ID и названия каналов аккаунта, не публикуя отчёт.
+Команда выводит ID и названия каналов и супергрупп аккаунта, не публикуя отчёт.
 В текущей реализации флаг `-channels` есть только у `report`, и эта команда
 проверяет наличие настроек Google даже для списка каналов. Для этого шага
 достаточно оставить блок `google` из шаблона и непустой `GOOGLE_OAUTH_CLIENT`

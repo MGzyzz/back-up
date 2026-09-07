@@ -258,15 +258,14 @@ type Channel struct {
 	Title string
 }
 
-// ListChannels возвращает каналы аккаунта. Нужна на настройке: ID канала
+// ListChannels возвращает каналы и супергруппы аккаунта. Нужна на настройке: ID канала
 // неоткуда взять, а без него сервис не знает, что читать.
 func (c *Client) ListChannels(ctx context.Context) ([]Channel, error) {
 	var out []Channel
 	err := c.runAuthed(ctx, func(ctx context.Context, tgc *telegram.Client) error {
 		return eachChannel(ctx, tgc.API(), func(ch *tg.Channel) bool {
-			if !ch.Megagroup {
-				out = append(out, Channel{ID: ch.ID, Title: ch.Title})
-			}
+			// Супергруппы тоже представлены tg.Channel и поддерживаются FetchDay.
+			out = append(out, Channel{ID: ch.ID, Title: ch.Title})
 			return false
 		})
 	})
