@@ -310,26 +310,6 @@ Cron использует часовой пояс планировщика. Ре
 Бэкап без единого сообщения не появится: справочника ожидаемых запусков нет.
 Время и длительность в сводке берутся у успешной ноды; без них выводится прочерк.
 
-## Структура
-
-```text
-back_end/cmd/api-server/   HTTP-сервер и вход в Telegram
-back_end/cmd/report/       CLI отчётов и интерактивные режимы
-back_end/internal/api/     HTTP-обработчики, JSON, кэш
-back_end/internal/app/     сбор, публикация и очистка отчётов
-back_end/internal/config/  конфигурация
-back_end/internal/dates/   границы суток
-back_end/internal/parser/  разбор сообщений
-back_end/internal/report/  агрегация и строки таблиц
-back_end/internal/telegram/ чтение истории и авторизация
-back_end/internal/gsheets/ Google OAuth, Sheets и Drive
-front_end/src/            React-интерфейс
-back_end/Dockerfile       образ API и сборщика отчётов
-front_end/Dockerfile      образ nginx с фронтендом
-front_end/nginx.conf      прокси /api
-docker-compose.yml       запуск двух сервисов
-```
-
 ## Проверки
 
 Из корня клона:
