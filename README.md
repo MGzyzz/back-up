@@ -58,17 +58,23 @@ cp configs/config.example.yaml config.yaml
 | `labels` | Карта `LABELS` из сообщения → имя бэкапа в отчёте. Имена должны различать задачи |
 
 Секретов в конфиге нет — они берутся из окружения. Заготовка лежит
-в `configs/env.example.sh`:
+в `back_end/.env.example` (из `back_end/` — `.env.example`):
 
 ```sh
-export TELEGRAM_API_ID=1234567
-export TELEGRAM_API_HASH=...
-export TELEGRAM_PHONE=+77001234567
-export TELEGRAM_2FA_PASSWORD=...          # только для -login, если включена 2FA
-export GOOGLE_OAUTH_CLIENT=/path/to/client_secret.json
+TELEGRAM_API_ID=1234567
+TELEGRAM_API_HASH=...
+TELEGRAM_PHONE=+77001234567
+TELEGRAM_2FA_PASSWORD=...          # только для -login, если включена 2FA
+GOOGLE_OAUTH_CLIENT=/path/to/client_secret.json
 ```
 
-Файлы `config.yaml`, `data/` и `secrets/` — в `.gitignore`.
+`.env` — единственный рабочий файл секретов. `.env.example` — шаблон без
+секретов, который хранится в Git; при запуске он не читается. Отдельный
+`env.sh` не требуется. Docker Compose читает `.env` через `env_file`,
+а при локальном запуске переменные экспортируются командами выше/ниже.
+Значения с пробелами или специальными символами заключайте в одинарные кавычки.
+
+Файлы `.env`, `config.yaml`, `data/` и `secrets/` — в `.gitignore`.
 
 **`data/session.json` — это полный доступ к Telegram-аккаунту**, а не отзываемый
 токен бота. Права `0600`, на сервер копировать только по ssh.
@@ -88,10 +94,10 @@ go build -o backup-report ./cmd/report
 
 ```sh
 cp configs/config.example.yaml config.yaml
-cp configs/env.example.sh env.sh && chmod 600 env.sh
+cp .env.example .env && chmod 600 .env
 ```
 
-В `config.yaml` подставить `google.folder_id`, в `env.sh` — значения, полученные
+В `config.yaml` подставить `google.folder_id`, в `.env` — значения, полученные
 в разделе «Подготовка». `telegram.channel_id` пока оставить как в примере:
 настоящий ID узнаётся на шаге 4, а пустым это поле быть не может — без него
 сервис не стартует.
@@ -99,7 +105,9 @@ cp configs/env.example.sh env.sh && chmod 600 env.sh
 Секреты живут в окружении, а не в конфиге, поэтому в каждой новой оболочке:
 
 ```sh
-source ./env.sh
+set -a
+. ./.env
+set +a
 ```
 
 Если чего-то не хватает, сервис перечислит **все** недостающие переменные разом
@@ -165,10 +173,10 @@ CHANNEL_ID     НАЗВАНИЕ
 В cron:
 
 ```
-0 11 * * *  cd /opt/backup-report && . ./env.sh && ./backup-report
+0 11 * * *  cd /opt/backup-report/back_end && set -a && . ./.env && set +a && ./backup-report
 ```
 
-`. ./env.sh` здесь обязателен. Cron запускает задачу с почти пустым окружением:
+Загрузка `.env` через `set -a; . ./.env; set +a` здесь обязательна. Cron запускает задачу с почти пустым окружением:
 без этой части команды сервис не найдёт ни одной переменной и упадёт на проверке
 конфига.
 
