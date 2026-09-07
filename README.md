@@ -15,7 +15,7 @@
 ```sh
 cp back_end/.env.example back_end/.env
 cp back_end/configs/config.example.yaml back_end/config.yaml
-mkdir -p back_end/data
+mkdir -p back_end/data back_end/secrets
 chmod 600 back_end/.env back_end/config.yaml
 ```
 
@@ -24,6 +24,15 @@ chmod 600 back_end/.env back_end/config.yaml
 - `back_end/config.yaml` — параметры канала, расписания, отчётов и API.
 - `back_end/data/` — созданные при входе сессия Telegram и токен Google.
 - `back_end/secrets/` — OAuth JSON Google, если используются отчёты.
+
+`secrets/` создаётся пустым: сам OAuth JSON в Git не хранится, его кладут
+руками по инструкции из раздела про отчёты. Дашборду он не нужен, а вот
+`report` без него не обойдётся — и узнает об этом поздно. `.env.example`
+уже задаёт `GOOGLE_OAUTH_CLIENT=secrets/client_secret.json`, а проверка
+настроек считает достаточным непустое значение и существование файла
+не проверяет. Поэтому `report -login` сначала проведёт вход в Telegram
+и только потом откажет на Google. Перед входом убедитесь, что файл на месте:
+`ls -l "$GOOGLE_OAUTH_CLIENT"`.
 
 Отдельный `env.sh` не нужен. Docker Compose загружает `back_end/.env`
 через `env_file`. При локальном запуске Go переменные нужно экспортировать
@@ -238,8 +247,11 @@ go build -o backup-report ./cmd/report
 ./backup-report -login
 ```
 
-`report -login` выполняет вход и в Telegram, и в Google. Для Google используется
-браузерный OAuth-вход. Создаются `data/session.json` и `data/google_token.json`.
+`report -login` выполняет вход и в Telegram, и в Google. Браузер команда
+не открывает: ссылку для Google она печатает в терминал, открыть её нужно
+самому. Если приложение в Google Cloud осталось непроверенным, на
+предупреждении выберите «Дополнительные настройки» → «Перейти».
+Создаются `data/session.json` и `data/google_token.json`.
 
 ```sh
 # Отчёт за сегодня:
@@ -273,6 +285,10 @@ go build -o backup-report ./cmd/report
 | `-date` | День отчёта; по умолчанию сегодня, будущие даты отклоняются |
 | `-dry-run` | Не удалять старые отчёты, публикация остаётся включена |
 | `-daemon` | Ждать ежедневного времени `schedule.report_at` |
+
+Два сочетания команда отвергает, а не выполняет частично: `-login` вместе
+с `-channels` и `-date` вместе с `-daemon`. Молча проигнорированный флаг был бы
+хуже отказа — с ним легко решить, что отчёт построен за указанный день.
 
 Пример cron для клона в `/opt/backup-report`:
 
